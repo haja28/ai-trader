@@ -57,6 +57,31 @@ public class TradingSignalAgent implements AnalystAgent {
     private static final double ATR_SL_MULTIPLIER     = 2.0;  // swing default
     private static final int    MIN_CONFLUENCE_SCORE  = 4;    // out of 7
 
+    // V2 weighted model + gates
+    private static final double WEIGHT_F1_PRICE_VWAP        = 1.0;
+    private static final double WEIGHT_F2_RSI               = 0.8;
+    private static final double WEIGHT_F3_MACD              = 0.8;
+    private static final double WEIGHT_F4_EMA_ALIGN         = 1.0;
+    private static final double WEIGHT_F5_ADX_DI            = 1.2;
+    private static final double WEIGHT_F6_VOLUME            = 0.7;
+    private static final double WEIGHT_F7_SECONDARY_RSI     = 0.7;
+    private static final double WEIGHT_F8_REGIME            = 1.5;
+    private static final double WEIGHT_F9_HTF_PROXY         = 1.3;
+    private static final double WEIGHT_F10_REL_STRENGTH     = 1.0;
+
+    private static final double WEIGHTED_SCORE_MAX          = 10.0;
+    private static final double WEIGHTED_SCORE_THRESHOLD    = 6.2;
+    private static final double WEIGHTED_SCORE_CROSS_TH     = 5.6;
+
+    private static final double GATE_MIN_ATR_PCT            = 0.8;
+    private static final double GATE_MAX_ATR_PCT            = 8.0;
+    private static final double GATE_MIN_ADX                = 18.0;
+    private static final double ADX_TREND_THRESHOLD         = 25.0;
+    private static final double TREND_SPREAD_PCT_MIN        = 0.2;
+
+    private static final int    EMA_HTF_FAST                = 50;
+    private static final int    EMA_HTF_SLOW                = 100;
+
     public TradingSignalAgent(FinancialDataClient apiClient) {
         this.apiClient = apiClient;
     }
@@ -77,7 +102,8 @@ public class TradingSignalAgent implements AnalystAgent {
             log.info("[" + getAgentId() + "] Analyzing " + ticker);
 
             List<Price> prices = apiClient.getPrices(ticker, state.getStartDate(), state.getEndDate());
-            if (prices.size() < SLOW_EMA_PERIOD + 10) {
+            int minBars = Math.max(SLOW_EMA_PERIOD + 10, 35);
+            if (prices.size() < minBars) {
                 log.warning("[" + getAgentId() + "] Insufficient data for " + ticker + " (" + prices.size() + " bars)");
                 results.put(ticker, fallbackSignal(ticker));
                 continue;
@@ -95,6 +121,8 @@ public class TradingSignalAgent implements AnalystAgent {
             // ─── Compute all indicators ───
             double[] fastEmaArr = emaArray(closes, FAST_EMA_PERIOD);
             double[] slowEmaArr = emaArray(closes, SLOW_EMA_PERIOD);
+            double[] ema50Arr = emaArray(closes, EMA_HTF_FAST);
+            double[] ema100Arr = emaArray(closes, EMA_HTF_SLOW);
             double fastEma = fastEmaArr[n - 1];
             double slowEma = slowEmaArr[n - 1];
             double prevFastEma = fastEmaArr[n - 2];
@@ -110,6 +138,7 @@ public class TradingSignalAgent implements AnalystAgent {
             double rsiSecondary = rsi(closes, RSI_PERIOD * SECONDARY_RSI_MULT);
 
             double atr = atr(highs, lows, closes, ATR_PERIOD);
+            double atrPct = currentPrice > 0 ? (atr / currentPrice * 100.0) : 0;
             double vwap = vwap(closes, vols, VWAP_LOOKBACK);
             double avgVolume = avgVolume(vols, VOLUME_AVG_PERIOD);
 
@@ -131,10 +160,11 @@ public class TradingSignalAgent implements AnalystAgent {
             // ─── 7-FACTOR CONFLUENCE SCORING ───
             Map<String, Object> factorDetails = new LinkedHashMap<>();
             int score = 0;
+            double weightedScore = 0.0;
 
             // Factor 1: Price vs VWAP
             boolean f1 = directionIsLong ? (currentPrice > vwap) : (currentPrice < vwap);
-            if (f1) score++;
+            if (f1) { score++; weightedScore += WEIGHT_F1_PRICE_VWAP; }
             factorDetails.put("1_price_vs_vwap", Map.of(
                     "pass", f1,
                     "price", r2(currentPrice), "vwap", r2(vwap),
@@ -144,7 +174,7 @@ public class TradingSignalAgent implements AnalystAgent {
 
             // Factor 2: RSI (14) momentum
             boolean f2 = directionIsLong ? (rsi14 > 50) : (rsi14 < 50);
-            if (f2) score++;
+            if (f2) { score++; weightedScore += WEIGHT_F2_RSI; }
             factorDetails.put("2_rsi_momentum", Map.of(
                     "pass", f2,
                     "rsi_14", r2(rsi14),
@@ -153,7 +183,7 @@ public class TradingSignalAgent implements AnalystAgent {
 
             // Factor 3: MACD Trend
             boolean f3 = directionIsLong ? (macd > signal) : (macd < signal);
-            if (f3) score++;
+            if (f3) { score++; weightedScore += WEIGHT_F3_MACD; }
             factorDetails.put("3_macd_trend", Map.of(
                     "pass", f3,
                     "macd", r2(macd), "signal", r2(signal), "histogram", r2(macdHist),
@@ -162,7 +192,7 @@ public class TradingSignalAgent implements AnalystAgent {
 
             // Factor 4: EMA Alignment
             boolean f4 = directionIsLong ? emaBullish : emaBearish;
-            if (f4) score++;
+            if (f4) { score++; weightedScore += WEIGHT_F4_EMA_ALIGN; }
             factorDetails.put("4_ema_alignment", Map.of(
                     "pass", f4,
                     "fast_ema", r2(fastEma), "slow_ema", r2(slowEma),
@@ -174,7 +204,7 @@ public class TradingSignalAgent implements AnalystAgent {
             boolean adxStrong = adxValue > 25;
             boolean diConfirms = directionIsLong ? (plusDI > minusDI) : (minusDI > plusDI);
             boolean f5 = adxStrong && diConfirms;
-            if (f5) score++;
+            if (f5) { score++; weightedScore += WEIGHT_F5_ADX_DI; }
             factorDetails.put("5_adx_direction", Map.of(
                     "pass", f5,
                     "adx", r2(adxValue), "plus_di", r2(plusDI), "minus_di", r2(minusDI),
@@ -184,10 +214,10 @@ public class TradingSignalAgent implements AnalystAgent {
             // Factor 6: Volume Confirmation
             boolean volAboveAvg = vols[n - 1] > avgVolume;
             boolean candleConfirms = directionIsLong
-                    ? (closes[n - 1] > closes[n - 2])    // green candle for long
-                    : (closes[n - 1] < closes[n - 2]);   // red candle for short
+                    ? (closes[n - 1] > closes[n - 2])
+                    : (closes[n - 1] < closes[n - 2]);
             boolean f6 = volAboveAvg && candleConfirms;
-            if (f6) score++;
+            if (f6) { score++; weightedScore += WEIGHT_F6_VOLUME; }
             factorDetails.put("6_volume_confirmation", Map.of(
                     "pass", f6,
                     "current_volume", vols[n - 1], "avg_volume", Math.round(avgVolume),
@@ -197,20 +227,113 @@ public class TradingSignalAgent implements AnalystAgent {
 
             // Factor 7: Secondary TF RSI
             boolean f7 = directionIsLong ? (rsiSecondary > 50) : (rsiSecondary < 50);
-            if (f7) score++;
+            if (f7) { score++; weightedScore += WEIGHT_F7_SECONDARY_RSI; }
             factorDetails.put("7_secondary_tf_rsi", Map.of(
                     "pass", f7,
                     "rsi_" + (RSI_PERIOD * SECONDARY_RSI_MULT), r2(rsiSecondary),
                     "direction", rsiSecondary > 50 ? "bullish" : "bearish"
             ));
 
-            // ─── Signal gate ───
-            boolean signalFired = score >= MIN_CONFLUENCE_SCORE
-                    && (bullishCross || bearishCross || score >= 5); // 5+ can fire without fresh cross
+            // Factor 8: Regime compatibility
+            String regime;
+            boolean trendSpreadOk = currentPrice > 0 && (Math.abs(fastEma - slowEma) / currentPrice * 100.0) > TREND_SPREAD_PCT_MIN;
+            boolean trendRegime = adxValue >= ADX_TREND_THRESHOLD && trendSpreadOk;
+            if (trendRegime) {
+                regime = "trend";
+            } else if (atrPct > 4.5) {
+                regime = "high_volatility";
+            } else if (atrPct < 1.0) {
+                regime = "low_volatility";
+            } else {
+                regime = "range";
+            }
+            boolean regimePass = trendRegime && diConfirms;
+            boolean f8 = regimePass;
+            if (f8) { weightedScore += WEIGHT_F8_REGIME; }
+            factorDetails.put("8_regime_compatibility", Map.of(
+                    "pass", f8,
+                    "regime", regime,
+                    "trend_regime", trendRegime,
+                    "trend_spread_pct", r2(currentPrice > 0 ? Math.abs(fastEma - slowEma) / currentPrice * 100.0 : 0),
+                    "adx", r2(adxValue),
+                    "di_confirms", diConfirms
+            ));
 
-            // If score is high but direction is wrong vs crossover, flip
-            if (bearishCross && directionIsLong && score < 5)  { directionIsLong = false; }
-            if (bullishCross && !directionIsLong && score < 5) { directionIsLong = true; }
+            // Factor 9: Higher-timeframe proxy (adaptive)
+            boolean hasLongHtf = n >= EMA_HTF_SLOW + 5;
+            double ema50 = ema50Arr[n - 1];
+            double ema100 = ema100Arr[n - 1];
+            int slopeLookback = Math.min(5, n - 2);
+
+            boolean f9;
+            String htfMode;
+            if (hasLongHtf) {
+                double ema50Past = ema50Arr[n - 1 - slopeLookback];
+                boolean ema50SlopeUp = ema50 > ema50Past;
+                boolean ema50SlopeDown = ema50 < ema50Past;
+                f9 = directionIsLong
+                        ? (ema50 > ema100 && ema50SlopeUp)
+                        : (ema50 < ema100 && ema50SlopeDown);
+                htfMode = "ema50_ema100";
+                factorDetails.put("9_htf_proxy_alignment", Map.of(
+                        "pass", f9,
+                        "mode", htfMode,
+                        "ema50", r2(ema50),
+                        "ema100", r2(ema100),
+                        "lookback_bars", slopeLookback
+                ));
+            } else {
+                int shortLookback = Math.min(5, n - 2);
+                double fastPast = fastEmaArr[n - 1 - shortLookback];
+                double slowPast = slowEmaArr[n - 1 - shortLookback];
+                boolean fastSlopeUp = fastEma > fastPast;
+                boolean fastSlopeDown = fastEma < fastPast;
+                boolean alignNow = directionIsLong ? (fastEma > slowEma) : (fastEma < slowEma);
+                boolean alignPast = directionIsLong ? (fastPast > slowPast) : (fastPast < slowPast);
+                f9 = alignNow && alignPast && (directionIsLong ? fastSlopeUp : fastSlopeDown);
+                htfMode = "ema9_ema21_fallback";
+                factorDetails.put("9_htf_proxy_alignment", Map.of(
+                        "pass", f9,
+                        "mode", htfMode,
+                        "fast_ema", r2(fastEma),
+                        "slow_ema", r2(slowEma),
+                        "lookback_bars", shortLookback
+                ));
+            }
+            if (f9) { weightedScore += WEIGHT_F9_HTF_PROXY; }
+
+            // Factor 10: Relative strength proxy (adaptive lookback)
+            int lb20 = Math.min(20, n - 1);
+            int lb60 = Math.min(60, n - 1);
+            double ret20 = closes[n - 1 - lb20] != 0 ? (closes[n - 1] / closes[n - 1 - lb20]) - 1.0 : 0;
+            double ret60 = closes[n - 1 - lb60] != 0 ? (closes[n - 1] / closes[n - 1 - lb60]) - 1.0 : 0;
+            boolean rsSampleOk = lb20 >= 10 && lb60 >= 30;
+            boolean f10 = rsSampleOk && (directionIsLong
+                    ? (ret20 > 0 && ret60 > 0 && ret20 > (ret60 * 0.3))
+                    : (ret20 < 0 && ret60 < 0 && ret20 < (ret60 * 0.3)));
+            if (f10) { weightedScore += WEIGHT_F10_REL_STRENGTH; }
+            factorDetails.put("10_relative_strength_proxy", Map.of(
+                    "pass", f10,
+                    "sample_ok", rsSampleOk,
+                    "lb20", lb20,
+                    "lb60", lb60,
+                    "ret20_pct", r2(ret20 * 100.0),
+                    "ret60_pct", r2(ret60 * 100.0)
+            ));
+
+            boolean gateAtr = atrPct >= GATE_MIN_ATR_PCT && atrPct <= GATE_MAX_ATR_PCT;
+            boolean gateAdx = adxValue >= GATE_MIN_ADX;
+            boolean hardGatesPass = gateAtr && gateAdx;
+
+            double dynamicThreshold = (bullishCross || bearishCross) ? WEIGHTED_SCORE_CROSS_TH : WEIGHTED_SCORE_THRESHOLD;
+            if (!trendRegime) {
+                dynamicThreshold += 0.8;
+            }
+
+            boolean signalFired = hardGatesPass && weightedScore >= dynamicThreshold;
+
+            if (bearishCross && directionIsLong && weightedScore < WEIGHTED_SCORE_CROSS_TH) { directionIsLong = false; }
+            if (bullishCross && !directionIsLong && weightedScore < WEIGHTED_SCORE_CROSS_TH) { directionIsLong = true; }
 
             String position = directionIsLong ? "LONG" : "SHORT";
 
@@ -235,10 +358,17 @@ public class TradingSignalAgent implements AnalystAgent {
 
             // ─── Confidence from confluence score ───
             // Base: (score/7)*100, boosted by crossover and factor agreement
-            double confidence = Math.round((double) score / 7.0 * 100.0);
-            if (bullishCross || bearishCross) confidence = Math.min(95, confidence + 10);
-            if (score >= 6) confidence = Math.min(95, confidence + 5);
-            if (!signalFired) confidence = Math.max(10, confidence - 20);
+            // ─── Logistic confidence (v2) ───
+            boolean eventRisk = false; // placeholder until event calendar is integrated
+            double z = -1.4
+                    + 0.55 * weightedScore
+                    + 0.35 * ((bullishCross || bearishCross) ? 1.0 : 0.0)
+                    + 0.40 * (regimePass ? 1.0 : 0.0)
+                    - 0.45 * (eventRisk ? 1.0 : 0.0);
+
+            double probability = 1.0 / (1.0 + Math.exp(-z));
+            double confidence = Math.round(clamp(probability * 100.0, 5.0, 95.0));
+            if (!signalFired) confidence = Math.max(10.0, confidence - 15.0);
 
             double rrr = riskPerShare > 0 ? r2((Math.abs(tp[2] - entry)) / riskPerShare) : 0; // TP3 = 3R
 
@@ -257,7 +387,20 @@ public class TradingSignalAgent implements AnalystAgent {
 
             reasoning.put("confluence_score", score);
             reasoning.put("confluence_threshold", MIN_CONFLUENCE_SCORE);
+            reasoning.put("weighted_score", r2(weightedScore));
+            reasoning.put("weighted_score_max", WEIGHTED_SCORE_MAX);
+            reasoning.put("weighted_threshold", r2(dynamicThreshold));
             reasoning.put("signal_fired", signalFired);
+            reasoning.put("hard_gates", Map.of(
+                    "pass", hardGatesPass,
+                    "atr_pct", r2(atrPct),
+                    "atr_pct_range", GATE_MIN_ATR_PCT + "-" + GATE_MAX_ATR_PCT,
+                    "atr_gate", gateAtr,
+                    "adx", r2(adxValue),
+                    "adx_min", GATE_MIN_ADX,
+                    "adx_gate", gateAdx,
+                    "regime", regime
+            ));
             reasoning.put("confluence_factors", factorDetails);
 
             reasoning.put("ema_crossover", Map.of(
@@ -276,7 +419,7 @@ public class TradingSignalAgent implements AnalystAgent {
             indicators.put("macd_signal", r2(signal));
             indicators.put("macd_histogram", r2(macdHist));
             indicators.put("atr_14", r2(atr));
-            indicators.put("atr_pct", r2(atr / currentPrice * 100));
+            indicators.put("atr_pct", r2(atrPct));
             indicators.put("adx", r2(adxValue));
             indicators.put("plus_di", r2(plusDI));
             indicators.put("minus_di", r2(minusDI));
@@ -314,7 +457,7 @@ public class TradingSignalAgent implements AnalystAgent {
                     .confluenceThreshold(MIN_CONFLUENCE_SCORE)
                     .signalFired(signalFired)
                     .confidence(confidence)
-                    .algorithm("Sniper Confluence 7-Factor (EMA-Cross + VWAP + RSI + MACD + ADX/DI + Volume + SecTF-RSI)")
+                    .algorithm("Sniper Confluence V2 (Weighted 10-Factor + Regime/Gates + Logistic Confidence)")
                     .build();
 
             // Wrap in AnalystSignal
@@ -331,9 +474,10 @@ public class TradingSignalAgent implements AnalystAgent {
                     .build());
 
             log.info(String.format(
-                    "[%s] %s %s | Confluence: %d/7 (min %d) | Fired: %s | Entry: %.2f | SL: %.2f | " +
+                    "[%s] %s %s | Score: %d/7 | WScore: %.2f/%.1f (th %.2f) | Gates:%s | Fired:%s | Entry: %.2f | SL: %.2f | " +
                     "TP1: %.2f TP2: %.2f TP3: %.2f TP4: %.2f TP5: %.2f | R:R=%.1f | Conf=%.0f%%",
-                    getAgentId(), position, ticker, score, MIN_CONFLUENCE_SCORE, signalFired,
+                    getAgentId(), position, ticker, score, weightedScore, WEIGHTED_SCORE_MAX, dynamicThreshold,
+                    hardGatesPass, signalFired,
                     entry, stopLoss, tp[0], tp[1], tp[2], tp[3], tp[4], rrr, confidence));
         }
         return results;
@@ -484,6 +628,10 @@ public class TradingSignalAgent implements AnalystAgent {
 
     private double r2(double v) {
         return Math.round(v * 100.0) / 100.0;
+    }
+
+    private double clamp(double v, double min, double max) {
+        return Math.max(min, Math.min(max, v));
     }
 
     private AnalystSignal fallbackSignal(String ticker) {

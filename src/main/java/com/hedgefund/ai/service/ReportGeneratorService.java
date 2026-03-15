@@ -61,17 +61,29 @@ public class ReportGeneratorService {
             You are an expert financial analyst for a quantitative hedge fund.
             Generate a concise, professional Markdown trading report with these EXACT sections:
 
-            # AI Hedge Fund — Trading Report
+            # Genisys Lab Analysis — Trading Report
             ## Report Date & Tickers Analyzed
             ## Executive Summary
             2-3 sentences: market stance, signal direction, confidence, portfolio action, key prices.
 
             ## Trading Signals (per ticker)
-            ### TICKER sub-sections. TWO-COLUMN table (Parameter | Value) with: Position, Entry Point, Stop Loss, Risk-to-Reward Ratio, Confidence, Algorithm Used.
-            Then a SEPARATE two-column table (Take-Profit Level | Price) for TP1-TP5.
+            CRITICAL: Create ONE SUBSECTION PER TICKER. Each ticker MUST have:
+            ### TICKER
+            Two-column table (Parameter | Value): Position, Entry Point, Stop Loss, Risk-to-Reward Ratio, Confidence, Algorithm Used.
+            
+            Immediately after, a SEPARATE two-column table (Take-Profit Level | Price):
+            | **Take-Profit Level** | **Price** |
+            |-----------------------|-----------|
+            | TP1                   | X.XX      |
+            | TP2                   | X.XX      |
+            | TP3                   | X.XX      |
+            | TP4                   | X.XX      |
+            | TP5                   | X.XX      |
+
+            Then use --- before next ticker's ### subsection. NEVER combine tickers into one table.
 
             ## Technical Analysis Breakdown (per ticker)
-            ### TICKER Technical Indicators. ONE three-column table (Metric | Value | Interpretation) with bold category rows (empty value/interp): **Trend Analysis** (EMA values, MACD, MACD Histogram), **Momentum** (RSI 14), **Volatility** (ATR 14 with % of price), **VWAP Analysis** (VWAP with distance %), **Pivot Points** (Pivot, S1, S2, S3 computed from H/L/C), **Swing Points** (recent highs/lows).
+            ### TICKER Technical Indicators. ONE three-column table (Metric | Value | Interpretation) with bold category rows (empty value/interp): **Trend Analysis** (EMA values, MACD, MACD Histogram), **Momentum** (RSI 14), **Volatility** (ATR 14 with % of price), **VWAP Analysis** (VWAP with distance %), **Directional Movement** (ADX, +DI, -DI).
 
             ## Portfolio Decisions
             Table: Action | Quantity | Confidence | Reasoning
@@ -85,7 +97,7 @@ public class ReportGeneratorService {
             ## Conclusion & Recommendations
             Bold **Recommendation:** then **Key Levels to Watch:** bullet list with prices. End with italic monitoring note.
 
-            RULES: Use --- between sections. Round prices to 2 decimals. Bold table labels. Never invent data. Be concise.
+            RULES: Use --- between sections. Round prices to 2 decimals. Bold table labels. Extract all values from CRITICAL TRADING LEVELS section at top of user prompt. Never invent data. Be concise.
             """;
     }
 
@@ -94,6 +106,25 @@ public class ReportGeneratorService {
         sb.append("Generate a comprehensive trading report from the following analysis data.\n\n");
         sb.append("Report Date: ").append(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)).append("\n");
         sb.append("Tickers Analyzed: ").append(String.join(", ", tickers)).append("\n\n");
+
+        // ═══ CRITICAL TRADING LEVELS (extracted upfront for multi-ticker reliability) ═══
+        sb.append("=== CRITICAL TRADING LEVELS (Priority Data - Use These Exact Values in Report) ===\n\n");
+        sb.append("IMPORTANT: Each ticker below MUST have its OWN ### subsection in the Trading Signals section.\n");
+        sb.append("Extract Position, Entry, Stop Loss, R:R, Confidence, Algorithm from the first table below.\n");
+        sb.append("Extract TP1-TP5 from the Take-Profit table below. DO NOT merge tickers.\n\n");
+
+        if (response.getAnalystSignals() != null && response.getAnalystSignals().containsKey("trading_signal")) {
+            Map<String, AnalystSignal> tradingSignals = response.getAnalystSignals().get("trading_signal");
+            for (var tickerEntry : tradingSignals.entrySet()) {
+                String ticker = tickerEntry.getKey();
+                AnalystSignal signal = tickerEntry.getValue();
+                sb.append("━━━ ").append(ticker).append(" ━━━\n");
+                if (signal.getReasoning() instanceof Map<?, ?> rm) {
+                    appendTradingSignalDetails(sb, rm);
+                }
+                sb.append("\n");
+            }
+        }
 
         // Portfolio Decisions
         sb.append("=== PORTFOLIO DECISIONS ===\n");
@@ -105,8 +136,11 @@ public class ReportGeneratorService {
             }
         }
 
-        // Analyst Signals
-        sb.append("\n=== ANALYST SIGNALS ===\n");
+        // Analyst Signals (condensed for multi-ticker)
+        int tickerCount = tickers.size();
+        int perTickerBudget = tickerCount > 1 ? Math.max(800, 2000 / tickerCount) : 3000;
+
+        sb.append("\n=== ANALYST SIGNALS (Supporting Context) ===\n");
         if (response.getAnalystSignals() != null) {
             for (var agentEntry : response.getAnalystSignals().entrySet()) {
                 String agentName = agentEntry.getKey();
@@ -119,20 +153,22 @@ public class ReportGeneratorService {
                             ticker, signal.getSignal(), signal.getConfidence()));
 
                     if (signal.getReasoning() != null) {
-                        // For trading_signal agent, extract key fields explicitly
-                        // so TP levels are NEVER lost to truncation
-                        if ("trading_signal".equals(agentName) && signal.getReasoning() instanceof Map<?, ?> rm) {
-                            appendTradingSignalDetails(sb, rm);
-                        }
-
                         try {
-                            String reasoningJson = objectMapper.writeValueAsString(signal.getReasoning());
-                            if (reasoningJson.length() > 3000) {
-                                reasoningJson = reasoningJson.substring(0, 3000) + "... [truncated]";
+                            // For trading_signal: compact JSON with only essential context
+                            String reasoningJson;
+                            if ("trading_signal".equals(agentName) && signal.getReasoning() instanceof Map<?, ?> rm) {
+                                Map<String, Object> compactReasoning = buildCompactReasoning(rm);
+                                reasoningJson = objectMapper.writeValueAsString(compactReasoning);
+                            } else {
+                                reasoningJson = objectMapper.writeValueAsString(signal.getReasoning());
                             }
-                            sb.append("Full Reasoning: ").append(reasoningJson).append("\n");
+
+                            if (reasoningJson.length() > perTickerBudget) {
+                                reasoningJson = reasoningJson.substring(0, perTickerBudget) + "... [truncated]";
+                            }
+                            sb.append("Context: ").append(reasoningJson).append("\n");
                         } catch (Exception e) {
-                            sb.append("Reasoning: ").append(signal.getReasoning().toString()).append("\n");
+                            sb.append("Context: ").append(signal.getReasoning().toString()).append("\n");
                         }
                     }
                 }
@@ -143,55 +179,103 @@ public class ReportGeneratorService {
     }
 
     /**
+     * Build a compact reasoning map for trading_signal agent that excludes
+     * verbose nested factor details to save prompt budget in multi-ticker reports.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> buildCompactReasoning(Map<?, ?> fullReasoning) {
+        Map<String, Object> compact = new LinkedHashMap<>();
+
+        // Keep only essential summary fields
+        compact.put("ticker", fullReasoning.get("ticker"));
+        compact.put("current_price", fullReasoning.get("current_price"));
+        compact.put("confluence_score", fullReasoning.get("confluence_score"));
+        compact.put("weighted_score", fullReasoning.get("weighted_score"));
+        compact.put("weighted_threshold", fullReasoning.get("weighted_threshold"));
+        compact.put("signal_fired", fullReasoning.get("signal_fired"));
+        compact.put("hard_gates", fullReasoning.get("hard_gates"));
+
+        // Keep indicators summary (already compact)
+        compact.put("indicators", fullReasoning.get("indicators"));
+
+        // Keep EMA crossover info (compact)
+        compact.put("ema_crossover", fullReasoning.get("ema_crossover"));
+
+        // Exclude verbose "confluence_factors" map to save space
+        // (The critical TP levels are already extracted separately at top of prompt)
+
+        // Keep risk management and levels
+        compact.put("risk_management", fullReasoning.get("risk_management"));
+        compact.put("levels", fullReasoning.get("levels"));
+
+        // Keep trading_signal result object
+        compact.put("trading_signal", fullReasoning.get("trading_signal"));
+
+        return compact;
+    }
+
+    /**
      * Explicitly extract and append the critical trading signal fields (entry, SL, TP1-TP5)
-     * so they are guaranteed to appear in the LLM prompt even if the full JSON gets truncated.
+     * in a pre-formatted table structure that the LLM can directly copy into the report.
+     * This guarantees TP levels appear for every ticker.
      */
     @SuppressWarnings("unchecked")
     private void appendTradingSignalDetails(StringBuilder sb, Map<?, ?> reasoning) {
-        sb.append("Confluence Score: ").append(mapVal(reasoning, "confluence_score"))
-          .append("/7 (threshold: ").append(mapVal(reasoning, "confluence_threshold"))
-          .append(") Signal Fired: ").append(mapVal(reasoning, "signal_fired")).append("\n");
-
         Object tradingSig = reasoning.get("trading_signal");
+
+        String position = "";
+        String entry = "";
+        String stopLoss = "";
+        String rrr = "";
+        String confidence = "";
+        String algorithm = "";
+        String tp1 = "", tp2 = "", tp3 = "", tp4 = "", tp5 = "";
+
         if (tradingSig instanceof TradingSignalResult ts) {
-            sb.append("Position: ").append(ts.getPosition()).append("\n");
-            sb.append("Entry: ").append(ts.getEntryPoint()).append("\n");
-            sb.append("Stop Loss: ").append(ts.getStopLoss()).append("\n");
-            sb.append("Risk (1R): ").append(ts.getRiskPerShare()).append("\n");
-            sb.append("TP1 (1R): ").append(ts.getTp1()).append("\n");
-            sb.append("TP2 (2R): ").append(ts.getTp2()).append("\n");
-            sb.append("TP3 (3R): ").append(ts.getTp3()).append("\n");
-            sb.append("TP4 (4R): ").append(ts.getTp4()).append("\n");
-            sb.append("TP5 (5R): ").append(ts.getTp5()).append("\n");
-            sb.append("Breakeven Stop: ").append(ts.getBreakevenStop()).append("\n");
-            sb.append("R:R at TP3: ").append(ts.getRiskRewardRatio()).append("\n");
-            sb.append("Algorithm: ").append(ts.getAlgorithm()).append("\n");
+            position = ts.getPosition();
+            entry = String.valueOf(ts.getEntryPoint());
+            stopLoss = String.valueOf(ts.getStopLoss());
+            rrr = String.valueOf(ts.getRiskRewardRatio());
+            confidence = String.format("%.0f%%", ts.getConfidence());
+            algorithm = ts.getAlgorithm();
+            tp1 = String.valueOf(ts.getTp1());
+            tp2 = String.valueOf(ts.getTp2());
+            tp3 = String.valueOf(ts.getTp3());
+            tp4 = String.valueOf(ts.getTp4());
+            tp5 = String.valueOf(ts.getTp5());
         } else if (tradingSig instanceof Map<?, ?> tsMap) {
-            sb.append("Position: ").append(mapVal(tsMap, "position")).append("\n");
-            sb.append("Entry: ").append(mapVal(tsMap, "entryPoint")).append("\n");
-            sb.append("Stop Loss: ").append(mapVal(tsMap, "stopLoss")).append("\n");
-            sb.append("Risk (1R): ").append(mapVal(tsMap, "riskPerShare")).append("\n");
-            sb.append("TP1 (1R): ").append(mapVal(tsMap, "tp1")).append("\n");
-            sb.append("TP2 (2R): ").append(mapVal(tsMap, "tp2")).append("\n");
-            sb.append("TP3 (3R): ").append(mapVal(tsMap, "tp3")).append("\n");
-            sb.append("TP4 (4R): ").append(mapVal(tsMap, "tp4")).append("\n");
-            sb.append("TP5 (5R): ").append(mapVal(tsMap, "tp5")).append("\n");
-            sb.append("Breakeven Stop: ").append(mapVal(tsMap, "breakevenStop")).append("\n");
-            sb.append("R:R at TP3: ").append(mapVal(tsMap, "riskRewardRatio")).append("\n");
-            sb.append("Algorithm: ").append(mapVal(tsMap, "algorithm")).append("\n");
+            position = mapVal(tsMap, "position");
+            entry = mapVal(tsMap, "entryPoint");
+            stopLoss = mapVal(tsMap, "stopLoss");
+            rrr = mapVal(tsMap, "riskRewardRatio");
+            confidence = String.format("%.0f%%", Double.parseDouble(mapVal(tsMap, "confidence")));
+            algorithm = mapVal(tsMap, "algorithm");
+            tp1 = mapVal(tsMap, "tp1");
+            tp2 = mapVal(tsMap, "tp2");
+            tp3 = mapVal(tsMap, "tp3");
+            tp4 = mapVal(tsMap, "tp4");
+            tp5 = mapVal(tsMap, "tp5");
         }
 
-        Object levels = reasoning.get("levels");
-        if (levels instanceof Map<?, ?> lv) {
-            sb.append("Levels — Entry: ").append(mapVal(lv, "entry"));
-            sb.append(" | SL: ").append(mapVal(lv, "stop_loss"));
-            sb.append(" | TP1: ").append(mapVal(lv, "TP1_1R"));
-            sb.append(" | TP2: ").append(mapVal(lv, "TP2_2R"));
-            sb.append(" | TP3: ").append(mapVal(lv, "TP3_3R"));
-            sb.append(" | TP4: ").append(mapVal(lv, "TP4_4R"));
-            sb.append(" | TP5: ").append(mapVal(lv, "TP5_5R"));
-            sb.append(" | R:R: ").append(mapVal(lv, "risk_reward_ratio")).append("\n");
-        }
+        // Pre-formatted main signal table
+        sb.append("| **Parameter**            | **Value**                     |\n");
+        sb.append("|--------------------------|-------------------------------|\n");
+        sb.append("| Position                 | ").append(position).append("                          |\n");
+        sb.append("| Entry Point              | ").append(entry).append("                        |\n");
+        sb.append("| Stop Loss                | ").append(stopLoss).append("                        |\n");
+        sb.append("| Risk-to-Reward Ratio     | ").append(rrr).append("                             |\n");
+        sb.append("| Confidence               | ").append(confidence).append("                         |\n");
+        sb.append("| Algorithm Used           | ").append(algorithm).append(" |\n");
+        sb.append("\n");
+
+        // Pre-formatted TP table
+        sb.append("| **Take-Profit Level** | **Price** |\n");
+        sb.append("|-----------------------|-----------|\n");
+        sb.append("| TP1                   | ").append(tp1).append("      |\n");
+        sb.append("| TP2                   | ").append(tp2).append("      |\n");
+        sb.append("| TP3                   | ").append(tp3).append("      |\n");
+        sb.append("| TP4                   | ").append(tp4).append("      |\n");
+        sb.append("| TP5                   | ").append(tp5).append("      |\n");
     }
 
     /**
@@ -199,7 +283,7 @@ public class ReportGeneratorService {
      */
     private String buildFallbackReport(HedgeFundResponse response, List<String> tickers) {
         StringBuilder sb = new StringBuilder();
-        sb.append("# AI Hedge Fund — Trading Report\n\n");
+        sb.append("# Genisys Lab Analysis — Trading Report\n\n");
         sb.append("## Report Date & Tickers Analyzed\n");
         sb.append("**Date:** ").append(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)).append("  \n");
         sb.append("**Tickers Analyzed:** ").append(String.join(", ", tickers)).append("  \n\n");

@@ -196,7 +196,7 @@ public class PdfReportService {
         cell.setBorder(0);
         cell.setHorizontalAlignment(Element.ALIGN_CENTER);
 
-        Paragraph title = new Paragraph("AI HEDGE FUND", FONT_TITLE);
+        Paragraph title = new Paragraph("Genisys Lab Analysis", FONT_TITLE);
         title.setAlignment(Element.ALIGN_CENTER);
         cell.addElement(title);
 
@@ -436,7 +436,7 @@ public class PdfReportService {
             Font footerFont = new Font(Font.HELVETICA, 7, Font.NORMAL, TEXT_MUTED);
 
             // Left: branding
-            Phrase left = new Phrase("AI Hedge Fund  |  " + String.join(", ", tickers), footerFont);
+            Phrase left = new Phrase("Genisys Lab Analysis  |  " + String.join(", ", tickers), footerFont);
             ColumnText.showTextAligned(cb, Element.ALIGN_LEFT, left,
                     document.left(), document.bottom() - 20, 0);
 
