@@ -4,7 +4,7 @@ import com.hedgefund.ai.model.agent.AgentState;
 import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.api.CompanyNews;
 import com.hedgefund.ai.service.LlmService;
-import com.hedgefund.ai.service.api.FinancialDatasetsClient;
+import com.hedgefund.ai.service.api.FinancialDataClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -14,10 +14,10 @@ import java.util.logging.Logger;
 public class NewsSentimentAgent implements AnalystAgent {
 
     private static final Logger log = Logger.getLogger(NewsSentimentAgent.class.getName());
-    private final FinancialDatasetsClient apiClient;
+    private final FinancialDataClient apiClient;
     private final LlmService llmService;
 
-    public NewsSentimentAgent(FinancialDatasetsClient apiClient, LlmService llmService) {
+    public NewsSentimentAgent(FinancialDataClient apiClient, LlmService llmService) {
         this.apiClient = apiClient;
         this.llmService = llmService;
     }

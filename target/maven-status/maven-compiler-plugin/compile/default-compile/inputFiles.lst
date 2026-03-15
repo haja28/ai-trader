@@ -1,6 +1,7 @@
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\AiHedgeFundApplication.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\cache\ApiCache.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\AiConfig.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\FinancialDataProviderConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\JacksonConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\controller\HedgeFundController.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\agent\AgentState.java
@@ -27,6 +28,8 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\TradingSignalAgent.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\ValuationAnalystAgent.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\WarrenBuffettAgent.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\EodhdClient.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\FinancialDataClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\FinancialDatasetsClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\HedgeFundOrchestrator.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\LlmService.java

@@ -4,7 +4,7 @@ import com.hedgefund.ai.model.agent.AgentState;
 import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.agent.TradingSignalResult;
 import com.hedgefund.ai.model.api.Price;
-import com.hedgefund.ai.service.api.FinancialDatasetsClient;
+import com.hedgefund.ai.service.api.FinancialDataClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -43,7 +43,7 @@ import java.util.logging.Logger;
 public class TradingSignalAgent implements AnalystAgent {
 
     private static final Logger log = Logger.getLogger(TradingSignalAgent.class.getName());
-    private final FinancialDatasetsClient apiClient;
+    private final FinancialDataClient apiClient;
 
     // ── Configurable parameters (Swing / Daily defaults) ──
     private static final int    FAST_EMA_PERIOD       = 9;
@@ -57,7 +57,7 @@ public class TradingSignalAgent implements AnalystAgent {
     private static final double ATR_SL_MULTIPLIER     = 2.0;  // swing default
     private static final int    MIN_CONFLUENCE_SCORE  = 4;    // out of 7
 
-    public TradingSignalAgent(FinancialDatasetsClient apiClient) {
+    public TradingSignalAgent(FinancialDataClient apiClient) {
         this.apiClient = apiClient;
     }
 

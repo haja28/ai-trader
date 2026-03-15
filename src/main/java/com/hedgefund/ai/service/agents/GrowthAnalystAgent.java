@@ -3,7 +3,7 @@ package com.hedgefund.ai.service.agents;
 import com.hedgefund.ai.model.agent.AgentState;
 import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.api.FinancialMetrics;
-import com.hedgefund.ai.service.api.FinancialDatasetsClient;
+import com.hedgefund.ai.service.api.FinancialDataClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -13,9 +13,9 @@ import java.util.logging.Logger;
 public class GrowthAnalystAgent implements AnalystAgent {
 
     private static final Logger log = Logger.getLogger(GrowthAnalystAgent.class.getName());
-    private final FinancialDatasetsClient apiClient;
+    private final FinancialDataClient apiClient;
 
-    public GrowthAnalystAgent(FinancialDatasetsClient apiClient) { this.apiClient = apiClient; }
+    public GrowthAnalystAgent(FinancialDataClient apiClient) { this.apiClient = apiClient; }
 
     @Override public String getAgentId() { return "growth_analyst"; }
     @Override public String getDisplayName() { return "Growth Analyst"; }

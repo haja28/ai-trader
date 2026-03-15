@@ -28,8 +28,14 @@ Uses **Spring AI** for LLM integration (OpenAI & Ollama) and a REST API for the 
 └───┬───┘    └────┬────┘   └────┬────┘
     │              │              │
 ┌───▼──────────────▼──────────────▼───┐
-│     FinancialDatasetsClient          │
-│     (financialdatasets.ai API)       │
+│       FinancialDataClient            │
+│         (interface)                  │
+│                                      │
+│  ┌──────────────┐ ┌──────────────┐  │
+│  │ Financial    │ │   EODHD      │  │
+│  │ Datasets     │ │   Client     │  │
+│  │ (.ai API)    │ │ (eodhd.com)  │  │
+│  └──────────────┘ └──────────────┘  │
 └─────────────────┬───────────────────┘
                   │
 ┌─────────────────▼───────────────────┐
@@ -56,7 +62,9 @@ Uses **Spring AI** for LLM integration (OpenAI & Ollama) and a REST API for the 
 - **Maven 3.9+**
 - API keys (set as environment variables or in `application.properties`):
   - `OPENAI_API_KEY` — for OpenAI models
-  - `FINANCIAL_DATASETS_API_KEY` — for market data
+  - **Financial data** (choose one):
+    - `FINANCIAL_DATASETS_API_KEY` — for [financialdatasets.ai](https://financialdatasets.ai) (default)
+    - `EODHD_API_TOKEN` — for [EODHD](https://eodhd.com) (set `FINANCIAL_DATA_PROVIDER=eodhd`)
   - *(Optional)* Ollama running at `http://localhost:11434` for local LLMs
 
 ## Quick Start
@@ -84,6 +92,18 @@ $env:OPENAI_API_KEY = "sk-..."
 $env:FINANCIAL_DATASETS_API_KEY = "your-key"
 ```
 
+To use **EODHD** instead of Financial Datasets:
+
+```bash
+# Linux/Mac
+export FINANCIAL_DATA_PROVIDER=eodhd
+export EODHD_API_TOKEN=your-eodhd-token
+
+# Windows PowerShell
+$env:FINANCIAL_DATA_PROVIDER = "eodhd"
+$env:EODHD_API_TOKEN = "your-eodhd-token"
+```
+
 Then start:
 
 ```bash
@@ -94,6 +114,10 @@ Or with the JAR:
 
 ```bash
 java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar
+$env:FINANCIAL_DATA_PROVIDER = "eodhd"
+$env:EODHD_API_TOKEN = "your-eodhd-token"
+$env:EODHD_DEFAULT_EXCHANGE = "SG"
+java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar --spring.profiles.active=ollama
 ```
 
 #### Option B — Ollama / Local LLM (no OpenAI key needed)
@@ -263,6 +287,85 @@ mvn spring-boot:run
 curl http://localhost:8080/api/agents
 ```
 
+## Financial Data Providers
+
+The application supports two financial data providers, selectable via the `financial.data.provider` property (or the `FINANCIAL_DATA_PROVIDER` environment variable).
+
+### Financial Datasets (default)
+
+[financialdatasets.ai](https://financialdatasets.ai) — provides prices, financial metrics, line items, insider trades, company news, and company facts via a dedicated REST API.
+
+```properties
+financial.data.provider=financial-datasets
+financial.datasets.api-key=your-key
+```
+
+### EODHD
+
+[eodhd.com](https://eodhd.com) — comprehensive financial data API covering 70+ exchanges with EOD prices, fundamentals, insider transactions, news with sentiment, and historical market cap. Authenticates via the `api_token` query parameter.
+
+```properties
+financial.data.provider=eodhd
+eodhd.api-token=your-eodhd-token
+eodhd.base-url=https://eodhd.com/api
+# Default exchange for bare tickers (US, SG, LSE, TO, etc.)
+eodhd.default-exchange=US
+```
+
+**Using EODHD for Singapore (SGX) stocks:**
+
+Set the default exchange to `SG` so bare tickers are automatically resolved to the Singapore Exchange:
+
+```bash
+# Linux/Mac
+export FINANCIAL_DATA_PROVIDER=eodhd
+export EODHD_API_TOKEN=your-token
+export EODHD_DEFAULT_EXCHANGE=SG
+
+# Windows PowerShell
+$env:FINANCIAL_DATA_PROVIDER = "eodhd"
+$env:EODHD_API_TOKEN = "your-token"
+$env:EODHD_DEFAULT_EXCHANGE = "SG"
+```
+
+Then you can pass SGX ticker codes directly:
+
+```bash
+curl -X POST http://localhost:8080/api/hedge-fund/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tickers": ["D05", "O39", "U11", "Z74"],
+    "showReasoning": true
+  }'
+```
+
+Common SGX ticker codes: `D05` (DBS), `O39` (OCBC), `U11` (UOB), `Z74` (Singtel), `C6L` (SIA), `BS6` (YZJ Shipbuilding), `S68` (SGX), `A17U` (CapitaLand Ascendas REIT).
+
+You can also mix exchanges by using the full `SYMBOL.EXCHANGE` format — tickers with a dot are passed through as-is:
+
+```bash
+# Mix Singapore and US stocks
+curl -X POST http://localhost:8080/api/hedge-fund/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tickers": ["D05.SG", "AAPL.US", "O39.SG", "MSFT.US"],
+    "showReasoning": true
+  }'
+```
+
+**EODHD endpoint mapping:**
+
+| Feature | EODHD Endpoint | Notes |
+|---------|----------------|-------|
+| Prices | `GET /eod/{TICKER.US}` | Daily OHLCV with adjusted close |
+| Financial Metrics | `GET /fundamentals/{TICKER.US}` | Derived from Highlights, Valuation, Financials sections |
+| Line Items | `GET /fundamentals/{TICKER.US}` | Extracted from Income_Statement, Balance_Sheet, Cash_Flow |
+| Insider Trades | `GET /insider-transactions` | Mapped from SEC Form 4 filings |
+| Company News | `GET /news` | Includes sentiment polarity scores |
+| Market Cap | `GET /historical-market-cap/{TICKER.US}` | Falls back to fundamentals |
+
+> **Note:** EODHD tickers use the `SYMBOL.EXCHANGE` format (e.g. `AAPL.US`, `D05.SG`). The client automatically appends the configured default exchange (`.US` by default) to bare tickers. Set `eodhd.default-exchange=SG` for Singapore stocks.
+
 ## API Reference
 
 ### `POST /api/hedge-fund/run`
@@ -324,7 +427,11 @@ Key properties in `application.properties`:
 | `spring.ai.openai.api-key` | `${OPENAI_API_KEY}` | OpenAI API key |
 | `spring.ai.openai.chat.options.model` | `gpt-4.1` | OpenAI model |
 | `spring.ai.ollama.base-url` | `http://localhost:11434` | Ollama URL |
-| `financial.datasets.api-key` | `${FINANCIAL_DATASETS_API_KEY}` | Financial data API key |
+| `financial.data.provider` | `financial-datasets` | Data provider: `financial-datasets` or `eodhd` |
+| `financial.datasets.api-key` | `${FINANCIAL_DATASETS_API_KEY}` | Financial Datasets API key |
+| `eodhd.api-token` | `${EODHD_API_TOKEN}` | EODHD API token |
+| `eodhd.base-url` | `https://eodhd.com/api` | EODHD base URL |
+| `eodhd.default-exchange` | `US` | Default exchange suffix for bare tickers (`US`, `SG`, `LSE`, etc.) |
 | `hedgefund.default-model-provider` | `OPENAI` | Default LLM provider |
 | `hedgefund.max-llm-retries` | `3` | Max LLM retry attempts |
 | `hedgefund.initial-cash` | `100000.0` | Default starting cash |
@@ -370,7 +477,9 @@ src/main/java/com/hedgefund/ai/
 │   │   ├── ValuationAnalystAgent.java
 │   │   └── WarrenBuffettAgent.java
 │   └── api/
-│       └── FinancialDatasetsClient.java  # External API client
+│       ├── FinancialDataClient.java      # Provider interface
+│       ├── FinancialDatasetsClient.java  # financialdatasets.ai impl
+│       └── EodhdClient.java             # EODHD (eodhd.com) impl
 └── resources/
     └── application.properties
 ```

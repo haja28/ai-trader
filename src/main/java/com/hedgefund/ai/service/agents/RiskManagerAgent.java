@@ -2,7 +2,7 @@ package com.hedgefund.ai.service.agents;
 
 import com.hedgefund.ai.model.agent.AgentState;
 import com.hedgefund.ai.model.api.Price;
-import com.hedgefund.ai.service.api.FinancialDatasetsClient;
+import com.hedgefund.ai.service.api.FinancialDataClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -16,9 +16,9 @@ import java.util.logging.Logger;
 public class RiskManagerAgent {
 
     private static final Logger log = Logger.getLogger(RiskManagerAgent.class.getName());
-    private final FinancialDatasetsClient apiClient;
+    private final FinancialDataClient apiClient;
 
-    public RiskManagerAgent(FinancialDatasetsClient apiClient) {
+    public RiskManagerAgent(FinancialDataClient apiClient) {
         this.apiClient = apiClient;
     }
 

@@ -6,7 +6,7 @@ import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.api.FinancialMetrics;
 import com.hedgefund.ai.model.api.LineItem;
 import com.hedgefund.ai.service.LlmService;
-import com.hedgefund.ai.service.api.FinancialDatasetsClient;
+import com.hedgefund.ai.service.api.FinancialDataClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -16,10 +16,10 @@ import java.util.logging.Logger;
 public class WarrenBuffettAgent implements AnalystAgent {
 
     private static final Logger log = Logger.getLogger(WarrenBuffettAgent.class.getName());
-    private final FinancialDatasetsClient apiClient;
+    private final FinancialDataClient apiClient;
     private final LlmService llmService;
 
-    public WarrenBuffettAgent(FinancialDatasetsClient apiClient, LlmService llmService) {
+    public WarrenBuffettAgent(FinancialDataClient apiClient, LlmService llmService) {
         this.apiClient = apiClient;
         this.llmService = llmService;
     }

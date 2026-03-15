@@ -18,7 +18,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Service
-public class FinancialDatasetsClient {
+public class FinancialDatasetsClient implements FinancialDataClient {
 
     private static final Logger log = Logger.getLogger(FinancialDatasetsClient.class.getName());
 
@@ -161,6 +161,7 @@ public class FinancialDatasetsClient {
 
     // ======================== Line Items ========================
 
+    @Override
     public List<LineItem> searchLineItems(String ticker, List<String> lineItems,
                                           String endDate, String period, int limit) {
         try {
@@ -193,6 +194,7 @@ public class FinancialDatasetsClient {
 
     // ======================== Insider Trades ========================
 
+    @Override
     public List<InsiderTrade> getInsiderTrades(String ticker, String endDate, int limit) {
         String cacheKey = "insider_" + ticker + "_" + endDate + "_" + limit;
         List<InsiderTrade> cached = cache.get(cacheKey);
@@ -223,6 +225,7 @@ public class FinancialDatasetsClient {
 
     // ======================== Company News ========================
 
+    @Override
     public List<CompanyNews> getCompanyNews(String ticker, String endDate, int limit) {
         String cacheKey = "news_" + ticker + "_" + endDate + "_" + limit;
         List<CompanyNews> cached = cache.get(cacheKey);
@@ -253,6 +256,7 @@ public class FinancialDatasetsClient {
 
     // ======================== Market Cap ========================
 
+    @Override
     public Double getMarketCap(String ticker, String endDate) {
         // If end_date is today, use company facts API
         String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
