@@ -1,0 +1,496 @@
+package com.hedgefund.ai.service.agents;
+
+import com.hedgefund.ai.model.agent.AgentState;
+import com.hedgefund.ai.model.agent.AnalystSignal;
+import com.hedgefund.ai.model.agent.TradingSignalResult;
+import com.hedgefund.ai.model.api.Price;
+import com.hedgefund.ai.service.api.FinancialDatasetsClient;
+import org.springframework.stereotype.Component;
+
+import java.util.*;
+import java.util.logging.Logger;
+
+/**
+ * <h2>Sniper Confluence Entry / Exit Agent</h2>
+ *
+ * A precision trade-entry system that combines <b>EMA crossover signals</b> with a
+ * <b>7-factor confluence scoring engine</b>. Signals only fire when multiple
+ * independent technical factors align, dramatically reducing false entries.
+ *
+ * <h3>Signal Generation</h3>
+ * Entries are triggered by a Fast EMA / Slow EMA crossover — but <b>only</b> when the
+ * confluence score meets the minimum threshold (default 4/7).
+ *
+ * <h3>7-Factor Confluence Engine (scored 0 – 7 per bar)</h3>
+ * <ol>
+ *   <li><b>Price vs VWAP</b> — Is price above (bullish) / below (bearish) the VWAP?</li>
+ *   <li><b>RSI (14)</b> — Is momentum bullish (&gt;50) or bearish (&lt;50)?</li>
+ *   <li><b>MACD Trend</b> — Is the MACD line above/below its signal line?</li>
+ *   <li><b>EMA Alignment</b> — Is the fast EMA above/below the slow EMA?</li>
+ *   <li><b>ADX + Directional Movement</b> — Is trend strength &gt;25 with DI confirming?</li>
+ *   <li><b>Volume Confirmation</b> — Is volume above average with confirming candle?</li>
+ *   <li><b>Secondary TF RSI</b> — Does a 3× period RSI confirm the direction?</li>
+ * </ol>
+ *
+ * <h3>Risk Management</h3>
+ * <ul>
+ *   <li><b>Stop-Loss</b> — ATR × risk multiplier from entry</li>
+ *   <li><b>TP1-TP5</b> — 1R, 2R, 3R, 4R, 5R from entry (R = risk distance)</li>
+ *   <li><b>Trailing Stop → Breakeven</b> — SL moves to entry price after TP1 is hit</li>
+ * </ul>
+ */
+@Component
+public class TradingSignalAgent implements AnalystAgent {
+
+    private static final Logger log = Logger.getLogger(TradingSignalAgent.class.getName());
+    private final FinancialDatasetsClient apiClient;
+
+    // ── Configurable parameters (Swing / Daily defaults) ──
+    private static final int    FAST_EMA_PERIOD       = 9;
+    private static final int    SLOW_EMA_PERIOD       = 21;
+    private static final int    RSI_PERIOD            = 14;
+    private static final int    ATR_PERIOD            = 14;
+    private static final int    ADX_PERIOD            = 14;
+    private static final int    VWAP_LOOKBACK         = 20;
+    private static final int    VOLUME_AVG_PERIOD     = 20;
+    private static final int    SECONDARY_RSI_MULT    = 3;    // secondary TF = RSI(14*3 = 42)
+    private static final double ATR_SL_MULTIPLIER     = 2.0;  // swing default
+    private static final int    MIN_CONFLUENCE_SCORE  = 4;    // out of 7
+
+    public TradingSignalAgent(FinancialDatasetsClient apiClient) {
+        this.apiClient = apiClient;
+    }
+
+    @Override public String getAgentId()    { return "trading_signal"; }
+    @Override public String getDisplayName(){ return "Sniper Confluence Agent"; }
+    @Override public String getDescription(){ return "7-Factor Confluence Entry/Exit — LONG/SHORT with TP1-TP5, ATR Stop-Loss & Breakeven Trailing"; }
+
+    // ════════════════════════════════════════════════════════════
+    //  MAIN ANALYSIS
+    // ════════════════════════════════════════════════════════════
+
+    @Override
+    public Map<String, AnalystSignal> analyze(AgentState state) {
+        Map<String, AnalystSignal> results = new LinkedHashMap<>();
+
+        for (String ticker : state.getTickers()) {
+            log.info("[" + getAgentId() + "] Analyzing " + ticker);
+
+            List<Price> prices = apiClient.getPrices(ticker, state.getStartDate(), state.getEndDate());
+            if (prices.size() < SLOW_EMA_PERIOD + 10) {
+                log.warning("[" + getAgentId() + "] Insufficient data for " + ticker + " (" + prices.size() + " bars)");
+                results.put(ticker, fallbackSignal(ticker));
+                continue;
+            }
+
+            double[] closes = prices.stream().mapToDouble(Price::getClose).toArray();
+            double[] highs  = prices.stream().mapToDouble(Price::getHigh).toArray();
+            double[] lows   = prices.stream().mapToDouble(Price::getLow).toArray();
+            long[]   vols   = prices.stream().mapToLong(Price::getVolume).toArray();
+            int n = closes.length;
+
+            double currentPrice = closes[n - 1];
+            double prevClose    = closes[n - 2];
+
+            // ─── Compute all indicators ───
+            double[] fastEmaArr = emaArray(closes, FAST_EMA_PERIOD);
+            double[] slowEmaArr = emaArray(closes, SLOW_EMA_PERIOD);
+            double fastEma = fastEmaArr[n - 1];
+            double slowEma = slowEmaArr[n - 1];
+            double prevFastEma = fastEmaArr[n - 2];
+            double prevSlowEma = slowEmaArr[n - 2];
+
+            double[] macdLine   = macdLineArray(closes, 12, 26);
+            double[] signalLine = emaArray(macdLine, 9);
+            double macd   = macdLine[n - 1];
+            double signal = signalLine[n - 1];
+            double macdHist = macd - signal;
+
+            double rsi14 = rsi(closes, RSI_PERIOD);
+            double rsiSecondary = rsi(closes, RSI_PERIOD * SECONDARY_RSI_MULT);
+
+            double atr = atr(highs, lows, closes, ATR_PERIOD);
+            double vwap = vwap(closes, vols, VWAP_LOOKBACK);
+            double avgVolume = avgVolume(vols, VOLUME_AVG_PERIOD);
+
+            double[] adxResult = adx(highs, lows, closes, ADX_PERIOD);
+            double adxValue = adxResult[0];
+            double plusDI  = adxResult[1];
+            double minusDI = adxResult[2];
+
+            // ─── EMA Crossover detection (bar-close confirmed) ───
+            boolean bullishCross = prevFastEma <= prevSlowEma && fastEma > slowEma;
+            boolean bearishCross = prevFastEma >= prevSlowEma && fastEma < slowEma;
+            // Also accept existing alignment as a valid ongoing signal
+            boolean emaBullish = fastEma > slowEma;
+            boolean emaBearish = fastEma < slowEma;
+
+            // Determine raw direction from EMA alignment
+            boolean directionIsLong = emaBullish;
+
+            // ─── 7-FACTOR CONFLUENCE SCORING ───
+            Map<String, Object> factorDetails = new LinkedHashMap<>();
+            int score = 0;
+
+            // Factor 1: Price vs VWAP
+            boolean f1 = directionIsLong ? (currentPrice > vwap) : (currentPrice < vwap);
+            if (f1) score++;
+            factorDetails.put("1_price_vs_vwap", Map.of(
+                    "pass", f1,
+                    "price", r2(currentPrice), "vwap", r2(vwap),
+                    "position", currentPrice > vwap ? "above" : "below",
+                    "distance_pct", r2((currentPrice - vwap) / vwap * 100)
+            ));
+
+            // Factor 2: RSI (14) momentum
+            boolean f2 = directionIsLong ? (rsi14 > 50) : (rsi14 < 50);
+            if (f2) score++;
+            factorDetails.put("2_rsi_momentum", Map.of(
+                    "pass", f2,
+                    "rsi_14", r2(rsi14),
+                    "direction", rsi14 > 50 ? "bullish" : "bearish"
+            ));
+
+            // Factor 3: MACD Trend
+            boolean f3 = directionIsLong ? (macd > signal) : (macd < signal);
+            if (f3) score++;
+            factorDetails.put("3_macd_trend", Map.of(
+                    "pass", f3,
+                    "macd", r2(macd), "signal", r2(signal), "histogram", r2(macdHist),
+                    "direction", macd > signal ? "bullish" : "bearish"
+            ));
+
+            // Factor 4: EMA Alignment
+            boolean f4 = directionIsLong ? emaBullish : emaBearish;
+            if (f4) score++;
+            factorDetails.put("4_ema_alignment", Map.of(
+                    "pass", f4,
+                    "fast_ema", r2(fastEma), "slow_ema", r2(slowEma),
+                    "alignment", emaBullish ? "bullish" : "bearish",
+                    "crossover_detected", bullishCross ? "bullish_cross" : bearishCross ? "bearish_cross" : "none"
+            ));
+
+            // Factor 5: ADX + Directional Movement
+            boolean adxStrong = adxValue > 25;
+            boolean diConfirms = directionIsLong ? (plusDI > minusDI) : (minusDI > plusDI);
+            boolean f5 = adxStrong && diConfirms;
+            if (f5) score++;
+            factorDetails.put("5_adx_direction", Map.of(
+                    "pass", f5,
+                    "adx", r2(adxValue), "plus_di", r2(plusDI), "minus_di", r2(minusDI),
+                    "trend_strong", adxStrong, "di_confirms", diConfirms
+            ));
+
+            // Factor 6: Volume Confirmation
+            boolean volAboveAvg = vols[n - 1] > avgVolume;
+            boolean candleConfirms = directionIsLong
+                    ? (closes[n - 1] > closes[n - 2])    // green candle for long
+                    : (closes[n - 1] < closes[n - 2]);   // red candle for short
+            boolean f6 = volAboveAvg && candleConfirms;
+            if (f6) score++;
+            factorDetails.put("6_volume_confirmation", Map.of(
+                    "pass", f6,
+                    "current_volume", vols[n - 1], "avg_volume", Math.round(avgVolume),
+                    "volume_ratio", r2(vols[n - 1] / avgVolume),
+                    "above_average", volAboveAvg, "candle_confirms", candleConfirms
+            ));
+
+            // Factor 7: Secondary TF RSI
+            boolean f7 = directionIsLong ? (rsiSecondary > 50) : (rsiSecondary < 50);
+            if (f7) score++;
+            factorDetails.put("7_secondary_tf_rsi", Map.of(
+                    "pass", f7,
+                    "rsi_" + (RSI_PERIOD * SECONDARY_RSI_MULT), r2(rsiSecondary),
+                    "direction", rsiSecondary > 50 ? "bullish" : "bearish"
+            ));
+
+            // ─── Signal gate ───
+            boolean signalFired = score >= MIN_CONFLUENCE_SCORE
+                    && (bullishCross || bearishCross || score >= 5); // 5+ can fire without fresh cross
+
+            // If score is high but direction is wrong vs crossover, flip
+            if (bearishCross && directionIsLong && score < 5)  { directionIsLong = false; }
+            if (bullishCross && !directionIsLong && score < 5) { directionIsLong = true; }
+
+            String position = directionIsLong ? "LONG" : "SHORT";
+
+            // ─── Entry / SL / TP (R-based) ───
+            double entry = currentPrice; // bar-close entry
+
+            double stopLoss = directionIsLong
+                    ? entry - atr * ATR_SL_MULTIPLIER
+                    : entry + atr * ATR_SL_MULTIPLIER;
+
+            double riskPerShare = Math.abs(entry - stopLoss);  // = 1R
+            double breakevenStop = entry;  // SL moves here after TP1 hit
+
+            // TP1=1R, TP2=2R, TP3=3R, TP4=4R, TP5=5R
+            double[] tp = new double[5];
+            for (int i = 0; i < 5; i++) {
+                double rMultiple = i + 1;
+                tp[i] = directionIsLong
+                        ? entry + riskPerShare * rMultiple
+                        : entry - riskPerShare * rMultiple;
+            }
+
+            // ─── Confidence from confluence score ───
+            // Base: (score/7)*100, boosted by crossover and factor agreement
+            double confidence = Math.round((double) score / 7.0 * 100.0);
+            if (bullishCross || bearishCross) confidence = Math.min(95, confidence + 10);
+            if (score >= 6) confidence = Math.min(95, confidence + 5);
+            if (!signalFired) confidence = Math.max(10, confidence - 20);
+
+            double rrr = riskPerShare > 0 ? r2((Math.abs(tp[2] - entry)) / riskPerShare) : 0; // TP3 = 3R
+
+            // ─── EMA Retest detection (orange candle) ───
+            boolean retestCandle = false;
+            if (emaBullish) {
+                retestCandle = lows[n - 1] <= fastEma && closes[n - 1] > fastEma;
+            } else if (emaBearish) {
+                retestCandle = highs[n - 1] >= fastEma && closes[n - 1] < fastEma;
+            }
+
+            // ─── Build full reasoning ───
+            Map<String, Object> reasoning = new LinkedHashMap<>();
+            reasoning.put("ticker", ticker);
+            reasoning.put("current_price", r2(currentPrice));
+
+            reasoning.put("confluence_score", score);
+            reasoning.put("confluence_threshold", MIN_CONFLUENCE_SCORE);
+            reasoning.put("signal_fired", signalFired);
+            reasoning.put("confluence_factors", factorDetails);
+
+            reasoning.put("ema_crossover", Map.of(
+                    "fast_ema_period", FAST_EMA_PERIOD,
+                    "slow_ema_period", SLOW_EMA_PERIOD,
+                    "fast_ema", r2(fastEma), "slow_ema", r2(slowEma),
+                    "bullish_crossover", bullishCross,
+                    "bearish_crossover", bearishCross,
+                    "retest_candle", retestCandle
+            ));
+
+            Map<String, Object> indicators = new LinkedHashMap<>();
+            indicators.put("rsi_14", r2(rsi14));
+            indicators.put("rsi_secondary_" + (RSI_PERIOD * SECONDARY_RSI_MULT), r2(rsiSecondary));
+            indicators.put("macd", r2(macd));
+            indicators.put("macd_signal", r2(signal));
+            indicators.put("macd_histogram", r2(macdHist));
+            indicators.put("atr_14", r2(atr));
+            indicators.put("atr_pct", r2(atr / currentPrice * 100));
+            indicators.put("adx", r2(adxValue));
+            indicators.put("plus_di", r2(plusDI));
+            indicators.put("minus_di", r2(minusDI));
+            indicators.put("vwap", r2(vwap));
+            reasoning.put("indicators", indicators);
+
+            reasoning.put("risk_management", Map.of(
+                    "atr_sl_multiplier", ATR_SL_MULTIPLIER,
+                    "risk_per_share_1R", r2(riskPerShare),
+                    "breakeven_stop", r2(breakevenStop),
+                    "trailing_stop_rule", "SL moves to entry (breakeven) after TP1 is hit"
+            ));
+
+            reasoning.put("levels", Map.of(
+                    "entry", r2(entry),
+                    "stop_loss", r2(stopLoss),
+                    "TP1_1R", r2(tp[0]), "TP2_2R", r2(tp[1]), "TP3_3R", r2(tp[2]),
+                    "TP4_4R", r2(tp[3]), "TP5_5R", r2(tp[4]),
+                    "risk_reward_ratio", rrr
+            ));
+
+            // ─── Build TradingSignalResult ───
+            // Note: Don't embed 'reasoning' inside TradingSignalResult to avoid
+            // circular nesting (reasoning→trading_signal→reasoning) which causes
+            // JSON bloat and truncation of TP levels in reports.
+            TradingSignalResult tradingSignal = TradingSignalResult.builder()
+                    .position(position)
+                    .entryPoint(r2(entry))
+                    .stopLoss(r2(stopLoss))
+                    .tp1(r2(tp[0])).tp2(r2(tp[1])).tp3(r2(tp[2])).tp4(r2(tp[3])).tp5(r2(tp[4]))
+                    .breakevenStop(r2(breakevenStop))
+                    .riskPerShare(r2(riskPerShare))
+                    .riskRewardRatio(rrr)
+                    .confluenceScore(score)
+                    .confluenceThreshold(MIN_CONFLUENCE_SCORE)
+                    .signalFired(signalFired)
+                    .confidence(confidence)
+                    .algorithm("Sniper Confluence 7-Factor (EMA-Cross + VWAP + RSI + MACD + ADX/DI + Volume + SecTF-RSI)")
+                    .build();
+
+            // Wrap in AnalystSignal
+            String signalStr = directionIsLong ? "bullish" : "bearish";
+            if (!signalFired) signalStr = "neutral";  // no signal fired = neutral
+
+            Map<String, Object> fullReasoning = new LinkedHashMap<>(reasoning);
+            fullReasoning.put("trading_signal", tradingSignal);
+
+            results.put(ticker, AnalystSignal.builder()
+                    .signal(signalStr)
+                    .confidence(confidence)
+                    .reasoning(fullReasoning)
+                    .build());
+
+            log.info(String.format(
+                    "[%s] %s %s | Confluence: %d/7 (min %d) | Fired: %s | Entry: %.2f | SL: %.2f | " +
+                    "TP1: %.2f TP2: %.2f TP3: %.2f TP4: %.2f TP5: %.2f | R:R=%.1f | Conf=%.0f%%",
+                    getAgentId(), position, ticker, score, MIN_CONFLUENCE_SCORE, signalFired,
+                    entry, stopLoss, tp[0], tp[1], tp[2], tp[3], tp[4], rrr, confidence));
+        }
+        return results;
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  INDICATOR CALCULATIONS
+    // ════════════════════════════════════════════════════════════
+
+    /** EMA array — returns full-length array of EMA values */
+    private double[] emaArray(double[] data, int period) {
+        double k = 2.0 / (period + 1);
+        double[] out = new double[data.length];
+        out[0] = data[0];
+        for (int i = 1; i < data.length; i++) {
+            out[i] = (data[i] - out[i - 1]) * k + out[i - 1];
+        }
+        return out;
+    }
+
+    /** MACD line array = EMA(fast) - EMA(slow) */
+    private double[] macdLineArray(double[] closes, int fast, int slow) {
+        double[] f = emaArray(closes, fast);
+        double[] s = emaArray(closes, slow);
+        double[] m = new double[closes.length];
+        for (int i = 0; i < closes.length; i++) m[i] = f[i] - s[i];
+        return m;
+    }
+
+    /** RSI — Wilder's smoothed RSI */
+    private double rsi(double[] closes, int period) {
+        if (closes.length < period + 1) return 50;
+        int start = closes.length - period - 1;
+        double gainSum = 0, lossSum = 0;
+        for (int i = start + 1; i <= start + period; i++) {
+            double chg = closes[i] - closes[i - 1];
+            if (chg > 0) gainSum += chg; else lossSum += -chg;
+        }
+        double avgGain = gainSum / period;
+        double avgLoss = lossSum / period;
+        // Smooth through remaining bars
+        for (int i = start + period + 1; i < closes.length; i++) {
+            double chg = closes[i] - closes[i - 1];
+            avgGain = (avgGain * (period - 1) + Math.max(chg, 0)) / period;
+            avgLoss = (avgLoss * (period - 1) + Math.max(-chg, 0)) / period;
+        }
+        if (avgLoss == 0) return 100;
+        double rs = avgGain / avgLoss;
+        return 100 - (100 / (1 + rs));
+    }
+
+    /** ATR — Average True Range */
+    private double atr(double[] highs, double[] lows, double[] closes, int period) {
+        int n = closes.length;
+        if (n < 2) return 0;
+        int cnt = Math.min(period, n - 1);
+        double sum = 0;
+        for (int i = n - cnt; i < n; i++) {
+            double tr = Math.max(highs[i] - lows[i],
+                        Math.max(Math.abs(highs[i] - closes[i - 1]),
+                                 Math.abs(lows[i] - closes[i - 1])));
+            sum += tr;
+        }
+        return sum / cnt;
+    }
+
+    /** VWAP — Volume Weighted Average Price */
+    private double vwap(double[] closes, long[] vols, int lookback) {
+        int start = Math.max(0, closes.length - lookback);
+        double sumPV = 0; long sumV = 0;
+        for (int i = start; i < closes.length; i++) {
+            sumPV += closes[i] * vols[i];
+            sumV += vols[i];
+        }
+        return sumV > 0 ? sumPV / sumV : closes[closes.length - 1];
+    }
+
+    /** Average volume over N bars */
+    private double avgVolume(long[] vols, int period) {
+        int start = Math.max(0, vols.length - period);
+        long sum = 0;
+        int cnt = 0;
+        for (int i = start; i < vols.length; i++) { sum += vols[i]; cnt++; }
+        return cnt > 0 ? (double) sum / cnt : 0;
+    }
+
+    /**
+     * ADX with +DI and -DI (Wilder's method).
+     * Returns double[3] = { ADX, +DI, -DI }.
+     */
+    private double[] adx(double[] highs, double[] lows, double[] closes, int period) {
+        int n = closes.length;
+        if (n < period + 1) return new double[]{0, 0, 0};
+
+        double[] tr  = new double[n];
+        double[] pdm = new double[n]; // +DM
+        double[] mdm = new double[n]; // -DM
+
+        for (int i = 1; i < n; i++) {
+            tr[i] = Math.max(highs[i] - lows[i],
+                    Math.max(Math.abs(highs[i] - closes[i - 1]),
+                             Math.abs(lows[i] - closes[i - 1])));
+            double upMove   = highs[i] - highs[i - 1];
+            double downMove = lows[i - 1] - lows[i];
+            pdm[i] = (upMove > downMove && upMove > 0) ? upMove : 0;
+            mdm[i] = (downMove > upMove && downMove > 0) ? downMove : 0;
+        }
+
+        // Initial sums
+        double atrSmooth = 0, pdmSmooth = 0, mdmSmooth = 0;
+        for (int i = 1; i <= period; i++) {
+            atrSmooth += tr[i];
+            pdmSmooth += pdm[i];
+            mdmSmooth += mdm[i];
+        }
+
+        // Wilder smooth
+        double[] dx = new double[n];
+        double plusDI = 0, minusDI = 0;
+
+        for (int i = period + 1; i < n; i++) {
+            atrSmooth = atrSmooth - (atrSmooth / period) + tr[i];
+            pdmSmooth = pdmSmooth - (pdmSmooth / period) + pdm[i];
+            mdmSmooth = mdmSmooth - (mdmSmooth / period) + mdm[i];
+
+            plusDI  = atrSmooth > 0 ? (pdmSmooth / atrSmooth) * 100 : 0;
+            minusDI = atrSmooth > 0 ? (mdmSmooth / atrSmooth) * 100 : 0;
+
+            double diSum = plusDI + minusDI;
+            dx[i] = diSum > 0 ? Math.abs(plusDI - minusDI) / diSum * 100 : 0;
+        }
+
+        // ADX = smoothed average of DX
+        double adxVal = 0;
+        int adxStart = period + 1;
+        int adxCount = Math.min(period, n - adxStart);
+        if (adxCount <= 0) return new double[]{0, plusDI, minusDI};
+
+        for (int i = adxStart; i < adxStart + adxCount; i++) adxVal += dx[i];
+        adxVal /= adxCount;
+
+        for (int i = adxStart + adxCount; i < n; i++) {
+            adxVal = (adxVal * (period - 1) + dx[i]) / period;
+        }
+
+        return new double[]{adxVal, plusDI, minusDI};
+    }
+
+    private double r2(double v) {
+        return Math.round(v * 100.0) / 100.0;
+    }
+
+    private AnalystSignal fallbackSignal(String ticker) {
+        return AnalystSignal.builder()
+                .signal("neutral").confidence(0)
+                .reasoning(Map.of("error", "Insufficient price data for " + ticker))
+                .build();
+    }
+}
+
