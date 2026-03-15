@@ -68,7 +68,11 @@ cd ai-hedge-fund-java
 mvn clean package -DskipTests
 ```
 
-### 2. Set Environment Variables
+### 2. Choose a Provider & Start the Application
+
+#### Option A — OpenAI (requires API key)
+
+Set your API keys first:
 
 ```bash
 # Linux/Mac
@@ -80,19 +84,65 @@ $env:OPENAI_API_KEY = "sk-..."
 $env:FINANCIAL_DATASETS_API_KEY = "your-key"
 ```
 
-### 3. Run
+Then start:
 
 ```bash
 mvn spring-boot:run
 ```
 
-Or with Ollama:
+Or with the JAR:
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.arguments="--hedgefund.default-model-provider=OLLAMA"
+java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar
 ```
 
-### 4. Call the API
+#### Option B — Ollama / Local LLM (no OpenAI key needed)
+
+> **Important:** You **must** activate the `ollama` Spring profile to disable OpenAI auto-configuration.
+> Without it, Spring Boot will fail to start with:
+> `OpenAI API key must be set`.
+
+**Using Maven:**
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.profiles=ollama
+```
+
+**Using the JAR:**
+
+```bash
+java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar --spring.profiles.active=ollama
+```
+
+**Using an environment variable (PowerShell):**
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = "ollama"
+java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar
+```
+
+**Using an environment variable (Bash):**
+
+```bash
+SPRING_PROFILES_ACTIVE=ollama java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar
+```
+
+The `ollama` profile (`application-ollama.properties`) does the following:
+- Excludes `OpenAiAutoConfiguration` so no OpenAI API key is required
+- Sets `hedgefund.default-model-provider=OLLAMA`
+- Defaults to the `qwen3:30b` model (override with `$env:OLLAMA_MODEL` or `--spring.ai.ollama.chat.options.model=<model>`)
+
+You can also override the default model at startup:
+
+```bash
+# Maven
+mvn spring-boot:run -Dspring-boot.run.profiles=ollama -Dspring-boot.run.arguments="--spring.ai.ollama.chat.options.model=llama3"
+
+# JAR
+java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar --spring.profiles.active=ollama --spring.ai.ollama.chat.options.model=llama3
+```
+
+### 3. Call the API
 
 **Using OpenAI (default):**
 
@@ -163,7 +213,19 @@ ollama serve
 
 ### 4. Run the Hedge Fund with Ollama
 
-**Option A — Per-request (recommended):** Set `"modelProvider": "OLLAMA"` in the JSON body:
+**Option A — Start the server with the `ollama` profile (recommended):**
+
+```bash
+# Maven
+mvn spring-boot:run -Dspring-boot.run.profiles=ollama
+
+# JAR
+java -jar target/ai-hedge-fund-1.0.0-SNAPSHOT.jar --spring.profiles.active=ollama
+```
+
+This uses the `application-ollama.properties` profile which disables OpenAI and defaults to Ollama.
+
+**Option B — Per-request override:** If the server was started with the `ollama` profile (or with an OpenAI key), you can override the provider per request by setting `"modelProvider": "OLLAMA"` in the JSON body:
 
 ```bash
 curl -X POST http://localhost:8080/api/hedge-fund/run \
@@ -171,15 +233,15 @@ curl -X POST http://localhost:8080/api/hedge-fund/run \
   -d '{"tickers": ["AAPL"], "modelProvider": "OLLAMA"}'
 ```
 
-**Option B — Server-wide default:** Start the server with Ollama as the default provider:
+**Option C — Server-wide default with a specific model:**
 
 ```bash
 # PowerShell
 $env:OLLAMA_MODEL = "llama3"
-mvn spring-boot:run -Dspring-boot.run.arguments="--hedgefund.default-model-provider=OLLAMA"
+mvn spring-boot:run -Dspring-boot.run.profiles=ollama
 
 # Bash
-OLLAMA_MODEL=llama3 mvn spring-boot:run --args="--hedgefund.default-model-provider=OLLAMA"
+OLLAMA_MODEL=llama3 mvn spring-boot:run -Dspring-boot.run.profiles=ollama
 ```
 
 ### 5. Custom Ollama Host

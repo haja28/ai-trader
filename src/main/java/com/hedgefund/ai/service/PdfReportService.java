@@ -30,6 +30,7 @@ public class PdfReportService {
     private static final Color HEADER_BG     = new Color(34, 45, 65);
     private static final Color TABLE_HEADER  = new Color(44, 62, 92);
     private static final Color TABLE_ALT_ROW = new Color(240, 244, 250);
+    private static final Color TABLE_GROUP_BG = new Color(225, 232, 245);
     private static final Color TEXT_MUTED     = new Color(100, 110, 130);
     private static final Color BORDER_LIGHT  = new Color(200, 210, 225);
     private static final Color SUCCESS_GREEN = new Color(16, 150, 72);
@@ -44,6 +45,7 @@ public class PdfReportService {
     private static final Font FONT_SMALL      = new Font(Font.HELVETICA, 8, Font.NORMAL, TEXT_MUTED);
     private static final Font FONT_TABLE_HEAD = new Font(Font.HELVETICA, 9, Font.BOLD, Color.WHITE);
     private static final Font FONT_TABLE_CELL = new Font(Font.HELVETICA, 9, Font.NORMAL, BRAND_DARK);
+    private static final Font FONT_TABLE_GROUP = new Font(Font.HELVETICA, 9, Font.BOLD, BRAND_DARK);
     private static final Font FONT_QUOTE      = new Font(Font.HELVETICA, 10, Font.ITALIC, new Color(80, 90, 110));
     private static final Font FONT_BULLISH    = new Font(Font.HELVETICA, 10, Font.BOLD, SUCCESS_GREEN);
     private static final Font FONT_BEARISH    = new Font(Font.HELVETICA, 10, Font.BOLD, DANGER_RED);
@@ -119,13 +121,13 @@ public class PdfReportService {
                 }
 
                 // H1 — main title (skip it, we already have the banner)
-                if (line.startsWith("# ")) {
+                if (line.startsWith("# ") && !line.startsWith("## ")) {
                     continue;
                 }
 
                 // H2
                 if (line.startsWith("## ")) {
-                    String text = stripMarkdown(line.substring(3));
+                    String text = stripEmoji(stripMarkdown(line.substring(3)));
                     doc.add(new Paragraph(" ", FONT_SMALL));
                     Paragraph h2 = new Paragraph(text, FONT_H2);
                     h2.setSpacingBefore(10);
@@ -137,7 +139,7 @@ public class PdfReportService {
 
                 // H3
                 if (line.startsWith("### ")) {
-                    String text = stripMarkdown(line.substring(4));
+                    String text = stripEmoji(stripMarkdown(line.substring(4)));
                     Paragraph h3 = new Paragraph(text, FONT_H3);
                     h3.setSpacingBefore(8);
                     h3.setSpacingAfter(4);
@@ -234,10 +236,25 @@ public class PdfReportService {
         // Data rows
         for (int r = 1; r < rows.size(); r++) {
             String[] row = rows.get(r);
-            Color bg = (r % 2 == 0) ? TABLE_ALT_ROW : Color.WHITE;
+
+            // Detect category sub-header rows: first cell contains bold text, other cells are empty
+            boolean isCategoryRow = isCategorySubHeader(row, cols);
+
+            Color bg;
+            if (isCategoryRow) {
+                bg = TABLE_GROUP_BG;
+            } else {
+                bg = (r % 2 == 0) ? TABLE_ALT_ROW : Color.WHITE;
+            }
+
             for (int c = 0; c < cols; c++) {
                 String val = c < row.length ? row[c] : "";
-                Font cellFont = chooseCellFont(val);
+                Font cellFont;
+                if (isCategoryRow && c == 0) {
+                    cellFont = FONT_TABLE_GROUP;
+                } else {
+                    cellFont = chooseCellFont(val);
+                }
                 PdfPCell cell = new PdfPCell(new Phrase(stripMarkdown(val), cellFont));
                 cell.setBackgroundColor(bg);
                 cell.setPadding(5);
@@ -258,6 +275,22 @@ public class PdfReportService {
         if (lower.contains("bullish") || lower.equals("long") || lower.equals("buy")) return FONT_BULLISH;
         if (lower.contains("bearish") || lower.equals("short") || lower.equals("sell")) return FONT_BEARISH;
         return FONT_TABLE_CELL;
+    }
+
+    /**
+     * Detect category sub-header rows in tables: first cell contains bold markdown
+     * (e.g. "**Trend Analysis**") and all other cells are empty or whitespace.
+     */
+    private boolean isCategorySubHeader(String[] row, int cols) {
+        if (row.length == 0) return false;
+        String firstCell = row[0].trim();
+        // Check if first cell has bold markers
+        if (!firstCell.startsWith("**") || !firstCell.endsWith("**")) return false;
+        // Check if all other cells are empty
+        for (int c = 1; c < cols && c < row.length; c++) {
+            if (!row[c].trim().isEmpty()) return false;
+        }
+        return true;
     }
 
     private String[] parseTableRow(String line) {

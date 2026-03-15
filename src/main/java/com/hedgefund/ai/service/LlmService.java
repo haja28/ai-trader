@@ -112,12 +112,29 @@ public class LlmService {
      * @return raw LLM text response or null on failure
      */
     public String callRaw(String systemPrompt, String userPrompt, String provider, String modelName) {
+        return callRaw(systemPrompt, userPrompt, provider, modelName, 0);
+    }
+
+    /**
+     * Call the LLM and return the raw text response with an optional max-tokens cap.
+     *
+     * @param systemPrompt  system instructions
+     * @param userPrompt    user/human message
+     * @param provider      "OPENAI" or "OLLAMA" (nullable, falls back to default)
+     * @param modelName     specific model name (nullable, falls back to default)
+     * @param maxTokens     max output tokens (0 = no limit)
+     * @return raw LLM text response or null on failure
+     */
+    public String callRaw(String systemPrompt, String userPrompt, String provider, String modelName, int maxTokens) {
         String resolvedProvider = (provider != null && !provider.isBlank()) ? provider : defaultProvider;
         ChatModel model = resolveModel(resolvedProvider);
-        ChatOptions options = buildOptions(resolvedProvider, modelName);
+        ChatOptions options = buildOptionsWithMaxTokens(resolvedProvider, modelName, maxTokens);
         ChatClient client = ChatClient.create(model);
 
-        for (int attempt = 0; attempt < maxRetries; attempt++) {
+        // Only retry once for report generation to avoid long waits
+        int reportRetries = Math.min(maxRetries, 2);
+
+        for (int attempt = 0; attempt < reportRetries; attempt++) {
             try {
                 ChatClient.ChatClientRequestSpec spec = client.prompt()
                         .system(systemPrompt)
@@ -133,9 +150,9 @@ public class LlmService {
                 }
             } catch (Exception e) {
                 log.log(Level.WARNING, "LLM raw call attempt {0}/{1} failed: {2}",
-                        new Object[]{attempt + 1, maxRetries, e.getMessage()});
-                if (attempt == maxRetries - 1) {
-                    log.log(Level.SEVERE, "LLM raw call failed after " + maxRetries + " attempts", e);
+                        new Object[]{attempt + 1, reportRetries, e.getMessage()});
+                if (attempt == reportRetries - 1) {
+                    log.log(Level.SEVERE, "LLM raw call failed after " + reportRetries + " attempts", e);
                 }
             }
         }
@@ -166,6 +183,22 @@ public class LlmService {
             return OllamaOptions.builder().model(model).build();
         } else {
             return OpenAiChatOptions.builder().model(model).build();
+        }
+    }
+
+    private ChatOptions buildOptionsWithMaxTokens(String provider, String modelName, int maxTokens) {
+        String model = (modelName != null && !modelName.isBlank()) ? modelName : null;
+
+        if ("OLLAMA".equalsIgnoreCase(provider)) {
+            var builder = OllamaOptions.builder();
+            if (model != null) builder.model(model);
+            if (maxTokens > 0) builder.numPredict(maxTokens);
+            return builder.build();
+        } else {
+            var builder = OpenAiChatOptions.builder();
+            if (model != null) builder.model(model);
+            if (maxTokens > 0) builder.maxTokens(maxTokens);
+            return builder.build();
         }
     }
 

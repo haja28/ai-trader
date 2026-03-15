@@ -45,7 +45,7 @@ public class ReportGeneratorService {
         String systemPrompt = buildSystemPrompt();
         String userPrompt = buildUserPrompt(response, tickers);
 
-        String llmReport = llmService.callRaw(systemPrompt, userPrompt, modelProvider, modelName);
+        String llmReport = llmService.callRaw(systemPrompt, userPrompt, modelProvider, modelName, 4000);
 
         if (llmReport != null && !llmReport.isBlank()) {
             log.info("LLM report generated successfully (" + llmReport.length() + " chars)");
@@ -58,72 +58,34 @@ public class ReportGeneratorService {
 
     private String buildSystemPrompt() {
         return """
-            You are an expert financial analyst and report writer for a quantitative hedge fund.
-            You produce clear, professional, and actionable trading reports in Markdown format.
-            
-            Your report MUST include ALL of these sections with the exact headers shown:
-            
-            # AI Hedge Fund — Sniper Confluence Trading Report
-            
+            You are an expert financial analyst for a quantitative hedge fund.
+            Generate a concise, professional Markdown trading report with these EXACT sections:
+
+            # AI Hedge Fund — Trading Report
             ## Report Date & Tickers Analyzed
-            
             ## Executive Summary
-            A concise 2-3 sentence overview of the overall market stance, confluence score, and key actions.
-            
-            ## Sniper Confluence Dashboard (per ticker)
-            For EACH ticker, create a sub-section with:
-            - **Confluence Score**: X/7 (and whether it met the minimum threshold)
-            - **Signal Fired**: Yes/No
-            - **Position**: LONG or SHORT
-            - **7-Factor Breakdown** as a table:
-              Factor | Status | Details
-              1. Price vs VWAP | PASS/FAIL | values
-              2. RSI Momentum | PASS/FAIL | values
-              3. MACD Trend | PASS/FAIL | values
-              4. EMA Alignment | PASS/FAIL | values
-              5. ADX + Direction | PASS/FAIL | values
-              6. Volume Confirmation | PASS/FAIL | values
-              7. Secondary TF RSI | PASS/FAIL | values
-            
-            ## Trading Levels (per ticker)
-            Table with:
-            - **Entry Point**: bar-close price
-            - **Stop Loss**: ATR-based
-            - **Risk (1R)**: dollar amount per share
-            - **TP1 (1R)** through **TP5 (5R)**: R-multiple based targets
-            - **Breakeven Stop**: entry price (activates after TP1 hit)
-            - **Risk-to-Reward Ratio** at TP3
-            
-            ## Technical Indicators (per ticker)
-            - EMA crossover status (fast/slow EMA, crossover detected, retest candle)
-            - RSI (14) and secondary timeframe RSI
-            - MACD, Signal, Histogram
-            - ATR (14) with percentage
-            - ADX with +DI / -DI
-            - VWAP with distance from price
-            
+            2-3 sentences: market stance, signal direction, confidence, portfolio action, key prices.
+
+            ## Trading Signals (per ticker)
+            ### TICKER sub-sections. TWO-COLUMN table (Parameter | Value) with: Position, Entry Point, Stop Loss, Risk-to-Reward Ratio, Confidence, Algorithm Used.
+            Then a SEPARATE two-column table (Take-Profit Level | Price) for TP1-TP5.
+
+            ## Technical Analysis Breakdown (per ticker)
+            ### TICKER Technical Indicators. ONE three-column table (Metric | Value | Interpretation) with bold category rows (empty value/interp): **Trend Analysis** (EMA values, MACD, MACD Histogram), **Momentum** (RSI 14), **Volatility** (ATR 14 with % of price), **VWAP Analysis** (VWAP with distance %), **Pivot Points** (Pivot, S1, S2, S3 computed from H/L/C), **Swing Points** (recent highs/lows).
+
             ## Portfolio Decisions
-            Table with Action | Quantity | Confidence | Reasoning for each ticker.
-            
+            Table: Action | Quantity | Confidence | Reasoning
+
             ## Risk Assessment
-            Risk management data — position limits, volatility, exposure.
-            
+            Two-column table: Metric | Value (position limit, exposure, remaining limit, annualized volatility). Then a **Key Risk Note:** paragraph.
+
             ## Analyst Consensus
-            Summary table showing each analyst agent's signal and confidence per ticker.
-            
+            Table: Ticker | Analyst Agent | Signal | Confidence. Then > **Conflict Highlight:** blockquote.
+
             ## Conclusion & Recommendations
-            Final actionable recommendation with key levels to watch.
-            Include the trailing-stop-to-breakeven rule.
-            
-            RULES:
-            - Use tables (Markdown) for all numeric data
-            - Round all prices to 2 decimal places
-            - Be specific — cite exact numbers from the data
-            - Show PASS/FAIL for each of the 7 confluence factors
-            - Highlight the confluence score prominently (e.g. "5/7 — SIGNAL FIRED")
-            - Highlight any conflicting signals between analysts
-            - Keep the tone professional but accessible
-            - NEVER invent data — only use what is provided in the input
+            Bold **Recommendation:** then **Key Levels to Watch:** bullet list with prices. End with italic monitoring note.
+
+            RULES: Use --- between sections. Round prices to 2 decimals. Bold table labels. Never invent data. Be concise.
             """;
     }
 
@@ -165,8 +127,8 @@ public class ReportGeneratorService {
 
                         try {
                             String reasoningJson = objectMapper.writeValueAsString(signal.getReasoning());
-                            if (reasoningJson.length() > 8000) {
-                                reasoningJson = reasoningJson.substring(0, 8000) + "... [truncated]";
+                            if (reasoningJson.length() > 3000) {
+                                reasoningJson = reasoningJson.substring(0, 3000) + "... [truncated]";
                             }
                             sb.append("Full Reasoning: ").append(reasoningJson).append("\n");
                         } catch (Exception e) {
@@ -237,147 +199,237 @@ public class ReportGeneratorService {
      */
     private String buildFallbackReport(HedgeFundResponse response, List<String> tickers) {
         StringBuilder sb = new StringBuilder();
-        sb.append("# AI Hedge Fund — Sniper Confluence Trading Report\n\n");
-        sb.append("## Report Date & Tickers\n");
-        sb.append("- **Date**: ").append(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)).append("\n");
-        sb.append("- **Tickers**: ").append(String.join(", ", tickers)).append("\n\n");
+        sb.append("# AI Hedge Fund — Trading Report\n\n");
+        sb.append("## Report Date & Tickers Analyzed\n");
+        sb.append("**Date:** ").append(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)).append("  \n");
+        sb.append("**Tickers Analyzed:** ").append(String.join(", ", tickers)).append("  \n\n");
+
+        sb.append("---\n\n");
 
         sb.append("## Executive Summary\n");
         sb.append("*Report generated from Sniper Confluence 7-Factor analysis (LLM narrative unavailable).*\n\n");
 
-        // Sniper Confluence Dashboard + Trading Levels
+        sb.append("---\n\n");
+
+        // ── Trading Signals ──
         if (response.getAnalystSignals() != null && response.getAnalystSignals().containsKey("trading_signal")) {
+            sb.append("## Trading Signals (per ticker)\n\n");
             Map<String, AnalystSignal> tradingSignals = response.getAnalystSignals().get("trading_signal");
+
             for (var entry : tradingSignals.entrySet()) {
                 String ticker = entry.getKey();
                 AnalystSignal sig = entry.getValue();
 
-                sb.append("## Sniper Confluence Dashboard — ").append(ticker).append("\n\n");
+                sb.append("### ").append(ticker).append("\n");
 
                 if (sig.getReasoning() instanceof Map<?, ?> reasoningMap) {
-                    // Confluence score header
-                    String scoreStr = mapVal(reasoningMap, "confluence_score");
-                    String threshStr = mapVal(reasoningMap, "confluence_threshold");
-                    String firedStr = mapVal(reasoningMap, "signal_fired");
-                    sb.append("**Confluence Score: ").append(scoreStr).append("/7");
-                    sb.append(" (Threshold: ").append(threshStr).append("/7)");
-                    sb.append(" — Signal Fired: ").append("true".equals(firedStr) ? "YES" : "NO").append("**\n\n");
-
-                    // 7-Factor table
-                    Object factors = reasoningMap.get("confluence_factors");
-                    if (factors instanceof Map<?, ?> factorsMap) {
-                        sb.append("| # | Factor | Status | Details |\n");
-                        sb.append("|---|--------|--------|--------|\n");
-                        String[][] factorNames = {
-                                {"1_price_vs_vwap", "Price vs VWAP"},
-                                {"2_rsi_momentum", "RSI Momentum"},
-                                {"3_macd_trend", "MACD Trend"},
-                                {"4_ema_alignment", "EMA Alignment"},
-                                {"5_adx_direction", "ADX + Direction"},
-                                {"6_volume_confirmation", "Volume Confirmation"},
-                                {"7_secondary_tf_rsi", "Secondary TF RSI"}
-                        };
-                        for (int i = 0; i < factorNames.length; i++) {
-                            Object fObj = factorsMap.get(factorNames[i][0]);
-                            String pass = "N/A";
-                            String details = "";
-                            if (fObj instanceof Map<?, ?> fMap) {
-                                pass = "true".equals(String.valueOf(fMap.get("pass"))) ? "PASS" : "FAIL";
-                                details = fMap.toString().replaceAll("[{}]", "");
-                                if (details.length() > 80) details = details.substring(0, 80) + "...";
-                            }
-                            sb.append(String.format("| %d | %s | %s | %s |\n",
-                                    i + 1, factorNames[i][1], pass, details));
-                        }
-                        sb.append("\n");
-                    }
-
-                    // Trading levels — handle both TradingSignalResult (object) and Map (serialized)
                     Object tradingSig = reasoningMap.get("trading_signal");
-                    if (tradingSig instanceof TradingSignalResult ts) {
-                        sb.append("### Trading Levels\n\n");
-                        sb.append("| Field | Value |\n|---|---|\n");
-                        sb.append("| Position | ").append(ts.getPosition()).append(" |\n");
-                        sb.append("| Entry | ").append(ts.getEntryPoint()).append(" |\n");
-                        sb.append("| Stop Loss | ").append(ts.getStopLoss()).append(" |\n");
-                        sb.append("| Risk (1R) | ").append(ts.getRiskPerShare()).append(" |\n");
-                        sb.append("| TP1 (1R) | ").append(ts.getTp1()).append(" |\n");
-                        sb.append("| TP2 (2R) | ").append(ts.getTp2()).append(" |\n");
-                        sb.append("| TP3 (3R) | ").append(ts.getTp3()).append(" |\n");
-                        sb.append("| TP4 (4R) | ").append(ts.getTp4()).append(" |\n");
-                        sb.append("| TP5 (5R) | ").append(ts.getTp5()).append(" |\n");
-                        sb.append("| Breakeven Stop | ").append(ts.getBreakevenStop()).append(" |\n");
-                        sb.append("| R:R at TP3 | ").append(ts.getRiskRewardRatio()).append(" |\n");
-                        sb.append("| Confluence | ").append(ts.getConfluenceScore()).append("/7 |\n");
-                        sb.append("| Signal Fired | ").append(ts.isSignalFired() ? "YES" : "NO").append(" |\n");
-                        sb.append("| Algorithm | ").append(ts.getAlgorithm()).append(" |\n");
-                        sb.append("| Confidence | ").append(String.format("%.0f%%", ts.getConfidence())).append(" |\n");
-                    } else if (tradingSig instanceof Map<?, ?> tsMap) {
-                        sb.append("### Trading Levels\n\n");
-                        sb.append("| Field | Value |\n|---|---|\n");
-                        sb.append("| Position | ").append(mapVal(tsMap, "position")).append(" |\n");
-                        sb.append("| Entry | ").append(mapVal(tsMap, "entryPoint")).append(" |\n");
-                        sb.append("| Stop Loss | ").append(mapVal(tsMap, "stopLoss")).append(" |\n");
-                        sb.append("| Risk (1R) | ").append(mapVal(tsMap, "riskPerShare")).append(" |\n");
-                        sb.append("| TP1 (1R) | ").append(mapVal(tsMap, "tp1")).append(" |\n");
-                        sb.append("| TP2 (2R) | ").append(mapVal(tsMap, "tp2")).append(" |\n");
-                        sb.append("| TP3 (3R) | ").append(mapVal(tsMap, "tp3")).append(" |\n");
-                        sb.append("| TP4 (4R) | ").append(mapVal(tsMap, "tp4")).append(" |\n");
-                        sb.append("| TP5 (5R) | ").append(mapVal(tsMap, "tp5")).append(" |\n");
-                        sb.append("| Breakeven Stop | ").append(mapVal(tsMap, "breakevenStop")).append(" |\n");
-                        sb.append("| R:R at TP3 | ").append(mapVal(tsMap, "riskRewardRatio")).append(" |\n");
-                        sb.append("| Confluence | ").append(mapVal(tsMap, "confluenceScore")).append("/7 |\n");
-                        sb.append("| Algorithm | ").append(mapVal(tsMap, "algorithm")).append(" |\n");
-                        sb.append("| Confidence | ").append(String.format("%.0f%%", sig.getConfidence())).append(" |\n");
-                    }
 
-                    // Risk management
-                    Object riskMgmt = reasoningMap.get("risk_management");
-                    if (riskMgmt instanceof Map<?, ?> rmMap) {
-                        sb.append("\n> **Trailing Stop Rule**: ").append(mapVal(rmMap, "trailing_stop_rule")).append("\n");
+                    // Main signal table (two-column: Parameter | Value)
+                    sb.append("| **Parameter**               | **Value**   |\n");
+                    sb.append("|-----------------------------|-------------|\n");
+
+                    if (tradingSig instanceof TradingSignalResult ts) {
+                        sb.append("| **Position**                | ").append(ts.getPosition()).append("       |\n");
+                        sb.append("| **Entry Point**             | ").append(ts.getEntryPoint()).append("      |\n");
+                        sb.append("| **Stop Loss**               | ").append(ts.getStopLoss()).append("      |\n");
+                        sb.append("| **Risk-to-Reward Ratio**    | ").append(ts.getRiskRewardRatio()).append("        |\n");
+                        sb.append("| **Confidence**              | ").append(String.format("%.1f%%", ts.getConfidence())).append("       |\n");
+                        sb.append("| **Algorithm Used**          | ").append(ts.getAlgorithm()).append(" |\n");
+                    } else if (tradingSig instanceof Map<?, ?> tsMap) {
+                        sb.append("| **Position**                | ").append(mapVal(tsMap, "position")).append("       |\n");
+                        sb.append("| **Entry Point**             | ").append(mapVal(tsMap, "entryPoint")).append("      |\n");
+                        sb.append("| **Stop Loss**               | ").append(mapVal(tsMap, "stopLoss")).append("      |\n");
+                        sb.append("| **Risk-to-Reward Ratio**    | ").append(mapVal(tsMap, "riskRewardRatio")).append("        |\n");
+                        sb.append("| **Confidence**              | ").append(String.format("%.1f%%", sig.getConfidence())).append("       |\n");
+                        sb.append("| **Algorithm Used**          | ").append(mapVal(tsMap, "algorithm")).append(" |\n");
                     }
+                    sb.append("\n");
+
+                    // Take-profit table (two-column: Level | Price)
+                    sb.append("| **Take-Profit Level** | **Price** |\n");
+                    sb.append("|----------------------|-----------|\n");
+                    if (tradingSig instanceof TradingSignalResult ts) {
+                        sb.append("| TP1                  | ").append(ts.getTp1()).append("    |\n");
+                        sb.append("| TP2                  | ").append(ts.getTp2()).append("    |\n");
+                        sb.append("| TP3                  | ").append(ts.getTp3()).append("    |\n");
+                        sb.append("| TP4                  | ").append(ts.getTp4()).append("    |\n");
+                        sb.append("| TP5                  | ").append(ts.getTp5()).append("    |\n");
+                    } else if (tradingSig instanceof Map<?, ?> tsMap) {
+                        sb.append("| TP1                  | ").append(mapVal(tsMap, "tp1")).append("    |\n");
+                        sb.append("| TP2                  | ").append(mapVal(tsMap, "tp2")).append("    |\n");
+                        sb.append("| TP3                  | ").append(mapVal(tsMap, "tp3")).append("    |\n");
+                        sb.append("| TP4                  | ").append(mapVal(tsMap, "tp4")).append("    |\n");
+                        sb.append("| TP5                  | ").append(mapVal(tsMap, "tp5")).append("    |\n");
+                    }
+                    sb.append("\n");
                 }
-                sb.append("\n");
+                sb.append("---\n\n");
             }
         }
 
-        // Portfolio Decisions
+        // ── Technical Analysis Breakdown ──
+        if (response.getAnalystSignals() != null && response.getAnalystSignals().containsKey("trading_signal")) {
+            sb.append("## Technical Analysis Breakdown (per ticker)\n\n");
+            Map<String, AnalystSignal> tradingSignals = response.getAnalystSignals().get("trading_signal");
+
+            for (var entry : tradingSignals.entrySet()) {
+                String ticker = entry.getKey();
+                AnalystSignal sig = entry.getValue();
+
+                sb.append("### ").append(ticker).append(" Technical Indicators\n");
+                sb.append("| **Metric**               | **Value**       | **Interpretation**                     |\n");
+                sb.append("|--------------------------|-----------------|----------------------------------------|\n");
+
+                if (sig.getReasoning() instanceof Map<?, ?> reasoningMap) {
+                    Object indicators = reasoningMap.get("indicators");
+                    Object emaCross = reasoningMap.get("ema_crossover");
+                    Object tradingSig = reasoningMap.get("trading_signal");
+
+                    // Trend Analysis category
+                    sb.append("| **Trend Analysis**       |                 |                                        |\n");
+                    if (emaCross instanceof Map<?, ?> emaMap) {
+                        String fastEma = mapVal(emaMap, "fast_ema");
+                        String slowEma = mapVal(emaMap, "slow_ema");
+                        sb.append("| EMA").append(mapVal(emaMap, "fast_ema_period")).append("                     | ").append(fastEma).append("          | Fast EMA                  |\n");
+                        sb.append("| EMA").append(mapVal(emaMap, "slow_ema_period")).append("                    | ").append(slowEma).append("          | Slow EMA                  |\n");
+                        String crossStatus = "true".equals(String.valueOf(emaMap.get("bullish_crossover"))) ? "Bullish crossover" :
+                                "true".equals(String.valueOf(emaMap.get("bearish_crossover"))) ? "Bearish crossover" : "No crossover";
+                        sb.append("| EMA Crossover            | ").append(crossStatus).append(" |                       |\n");
+                    }
+                    if (indicators instanceof Map<?, ?> ind) {
+                        sb.append("| MACD                     | ").append(mapVal(ind, "macd")).append("           | |\n");
+                        sb.append("| MACD Histogram           | ").append(mapVal(ind, "macd_histogram")).append("           | |\n");
+
+                        // Momentum category
+                        sb.append("| **Momentum**             |                 |                                        |\n");
+                        sb.append("| RSI (14)                 | ").append(mapVal(ind, "rsi_14")).append("           | |\n");
+                        // Secondary RSI — find the key dynamically
+                        for (var indEntry : ((Map<?, ?>) ind).entrySet()) {
+                            String key = String.valueOf(indEntry.getKey());
+                            if (key.startsWith("rsi_secondary_")) {
+                                sb.append("| RSI (Secondary TF)       | ").append(indEntry.getValue()).append("           | |\n");
+                            }
+                        }
+
+                        // Volatility category
+                        sb.append("| **Volatility**           |                 |                                        |\n");
+                        String atrVal = mapVal(ind, "atr_14");
+                        String atrPct = mapVal(ind, "atr_pct");
+                        sb.append("| ATR (14)                 | ").append(atrVal).append("            | ").append(atrPct).append("% of price              |\n");
+
+                        // VWAP Analysis category
+                        sb.append("| **VWAP Analysis**        |                 |                                        |\n");
+                        sb.append("| VWAP                     | ").append(mapVal(ind, "vwap")).append("          | |\n");
+
+                        // ADX category
+                        sb.append("| **Directional Movement** |                 |                                        |\n");
+                        sb.append("| ADX                      | ").append(mapVal(ind, "adx")).append("           | |\n");
+                        sb.append("| +DI                      | ").append(mapVal(ind, "plus_di")).append("           | |\n");
+                        sb.append("| -DI                      | ").append(mapVal(ind, "minus_di")).append("           | |\n");
+                    }
+                }
+                sb.append("\n---\n\n");
+            }
+        }
+
+        // ── Portfolio Decisions ──
         sb.append("## Portfolio Decisions\n\n");
-        sb.append("| Ticker | Action | Quantity | Confidence | Reasoning |\n");
-        sb.append("|--------|--------|----------|------------|----------|\n");
+        sb.append("| **Action** | **Quantity** | **Confidence** | **Reasoning**                                      |\n");
+        sb.append("|------------|--------------|----------------|----------------------------------------------------|\n");
         if (response.getDecisions() != null) {
             for (var entry : response.getDecisions().entrySet()) {
                 PortfolioDecision d = entry.getValue();
-                sb.append(String.format("| %s | %s | %d | %d%% | %s |\n",
-                        entry.getKey(), d.getAction(), d.getQuantity(), d.getConfidence(), d.getReasoning()));
+                sb.append(String.format("| %s       | %d            | %d%%           | %s |\n",
+                        d.getAction(), d.getQuantity(), d.getConfidence(), d.getReasoning()));
             }
         }
 
-        // Analyst Consensus
-        sb.append("\n## Analyst Consensus\n\n");
-        sb.append("| Analyst | ");
-        for (String t : tickers) sb.append(t).append(" Signal | ").append(t).append(" Confidence | ");
-        sb.append("\n|---------|");
-        for (String ignored : tickers) sb.append("-----------|-------------|");
-        sb.append("\n");
+        sb.append("\n---\n\n");
 
-        if (response.getAnalystSignals() != null) {
-            for (var agentEntry : response.getAnalystSignals().entrySet()) {
-                sb.append("| ").append(agentEntry.getKey()).append(" | ");
-                for (String t : tickers) {
-                    AnalystSignal sig = agentEntry.getValue().get(t);
-                    if (sig != null) {
-                        sb.append(sig.getSignal()).append(" | ");
-                        sb.append(String.format("%.0f%% | ", sig.getConfidence()));
-                    } else {
-                        sb.append("N/A | N/A | ");
+        // ── Risk Assessment ──
+        sb.append("## Risk Assessment\n");
+        if (response.getAnalystSignals() != null && response.getAnalystSignals().containsKey("risk_management_agent")) {
+            Map<String, AnalystSignal> riskSignals = response.getAnalystSignals().get("risk_management_agent");
+            for (var entry : riskSignals.entrySet()) {
+                AnalystSignal riskSig = entry.getValue();
+                if (riskSig.getReasoning() instanceof Map<?, ?> riskMap) {
+                    Object reasoningObj = riskMap.get("reasoning");
+                    if (reasoningObj instanceof Map<?, ?> reasoning) {
+                        sb.append("| **Metric**                     | **Value**       |\n");
+                        sb.append("|--------------------------------|-----------------|\n");
+                        String limitPct = mapVal(reasoning, "position_limit_pct");
+                        String posLimit = mapVal(reasoning, "position_limit");
+                        String exposure = mapVal(reasoning, "current_exposure");
+                        String remaining = mapVal(reasoning, "remaining_limit");
+                        String vol = mapVal(reasoning, "annualized_volatility");
+
+                        try { posLimit = String.format("$%,.2f", Double.parseDouble(posLimit)); } catch (Exception ignored) {}
+                        try { exposure = String.format("$%,.2f", Double.parseDouble(exposure)); } catch (Exception ignored) {}
+                        try { remaining = String.format("$%,.2f", Double.parseDouble(remaining)); } catch (Exception ignored) {}
+                        try { vol = String.format("%.2f%%", Double.parseDouble(vol) * 100); } catch (Exception ignored) {}
+
+                        sb.append("| Position Limit (").append(String.format("%.0f%%", Double.parseDouble(limitPct) * 100)).append(" of portfolio) | ").append(posLimit).append("      |\n");
+                        sb.append("| Current Exposure               | ").append(exposure).append("           |\n");
+                        sb.append("| Remaining Position Limit       | ").append(remaining).append("      |\n");
+                        sb.append("| Annualized Volatility          | ").append(vol).append("          |\n");
+
+                        sb.append("| **Key Risk Note:** Current exposure status determines available position limit. Volatility (").append(vol).append(") is within acceptable range for short-term trading.\n");
                     }
                 }
-                sb.append("\n");
             }
         }
 
-        sb.append("\n---\n*Report generated by AI Hedge Fund — Sniper Confluence 7-Factor Engine*\n");
+        sb.append("\n---\n\n");
+
+        // ── Analyst Consensus ──
+        sb.append("## Analyst Consensus\n\n");
+        sb.append("| **Ticker** | **Analyst Agent**          | **Signal** | **Confidence** |\n");
+        sb.append("|------------|----------------------------|------------|----------------|\n");
+        if (response.getAnalystSignals() != null) {
+            for (var agentEntry : response.getAnalystSignals().entrySet()) {
+                String agentName = agentEntry.getKey();
+                for (var tickerEntry : agentEntry.getValue().entrySet()) {
+                    String ticker = tickerEntry.getKey();
+                    AnalystSignal sig = tickerEntry.getValue();
+                    if (sig != null) {
+                        sb.append(String.format("| %s       | %s             | %s    | %.1f%%          |\n",
+                                ticker, agentName, sig.getSignal(), sig.getConfidence()));
+                    }
+                }
+            }
+        }
+
+        sb.append("\n---\n\n");
+
+        // ── Conclusion & Recommendations ──
+        sb.append("## Conclusion & Recommendations\n");
+        sb.append("**Recommendation:** Review the analysis and trading levels above before entering positions.  \n\n");
+        sb.append("**Key Levels to Watch:**  \n");
+        if (response.getAnalystSignals() != null && response.getAnalystSignals().containsKey("trading_signal")) {
+            Map<String, AnalystSignal> tradingSignals = response.getAnalystSignals().get("trading_signal");
+            for (var entry : tradingSignals.entrySet()) {
+                AnalystSignal sig = entry.getValue();
+                if (sig.getReasoning() instanceof Map<?, ?> reasoningMap) {
+                    Object tradingSigObj = reasoningMap.get("trading_signal");
+                    if (tradingSigObj instanceof TradingSignalResult ts) {
+                        sb.append("- **Stop Loss**: **").append(ts.getStopLoss()).append("** — Reassess if breached.  \n");
+                        sb.append("- **TP1**: **").append(ts.getTp1()).append("** — First target.  \n");
+                        sb.append("- **TP3**: **").append(ts.getTp3()).append("** — Primary target (3R).  \n");
+                    } else if (tradingSigObj instanceof Map<?, ?> tsMap) {
+                        sb.append("- **Stop Loss**: **").append(mapVal(tsMap, "stopLoss")).append("** — Reassess if breached.  \n");
+                        sb.append("- **TP1**: **").append(mapVal(tsMap, "tp1")).append("** — First target.  \n");
+                        sb.append("- **TP3**: **").append(mapVal(tsMap, "tp3")).append("** — Primary target (3R).  \n");
+                    }
+                    Object indicators = reasoningMap.get("indicators");
+                    if (indicators instanceof Map<?, ?> ind) {
+                        sb.append("- **VWAP**: **").append(mapVal(ind, "vwap")).append("** — Break above signals bullish shift; break below reinforces bearish structure.  \n");
+                    }
+                }
+            }
+        }
+        sb.append("\n*Monitor price action relative to VWAP and support levels for next actionable signal.*\n");
+
         return sb.toString();
     }
 
