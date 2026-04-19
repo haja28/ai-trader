@@ -24,6 +24,25 @@ public class TradingSignalResult {
     private double tp4;
     private double tp5;
 
+    /** Bollinger Band levels */
+    private double bollingerUpper;
+    private double bollingerMiddle;
+    private double bollingerLower;
+
+    /** Fibonacci retracement levels (based on recent swing high/low) */
+    private double fibSwingHigh;
+    private double fibSwingLow;
+    private double fib236;
+    private double fib382;
+    private double fib500;
+    private double fib618;
+    private double fib786;
+
+    /** Key support level (strongest of BB lower / Fib 0.618 in downtrend) */
+    private double supportLevel;
+    /** Key resistance level (strongest of BB upper / Fib 0.618 in uptrend) */
+    private double resistanceLevel;
+
     /** Breakeven stop-loss price (SL moves here after TP1 is hit) */
     private double breakevenStop;
 
@@ -70,6 +89,30 @@ public class TradingSignalResult {
     public void setTp4(double v) { this.tp4 = v; }
     public double getTp5() { return tp5; }
     public void setTp5(double v) { this.tp5 = v; }
+    public double getBollingerUpper() { return bollingerUpper; }
+    public void setBollingerUpper(double v) { this.bollingerUpper = v; }
+    public double getBollingerMiddle() { return bollingerMiddle; }
+    public void setBollingerMiddle(double v) { this.bollingerMiddle = v; }
+    public double getBollingerLower() { return bollingerLower; }
+    public void setBollingerLower(double v) { this.bollingerLower = v; }
+    public double getFibSwingHigh() { return fibSwingHigh; }
+    public void setFibSwingHigh(double v) { this.fibSwingHigh = v; }
+    public double getFibSwingLow() { return fibSwingLow; }
+    public void setFibSwingLow(double v) { this.fibSwingLow = v; }
+    public double getFib236() { return fib236; }
+    public void setFib236(double v) { this.fib236 = v; }
+    public double getFib382() { return fib382; }
+    public void setFib382(double v) { this.fib382 = v; }
+    public double getFib500() { return fib500; }
+    public void setFib500(double v) { this.fib500 = v; }
+    public double getFib618() { return fib618; }
+    public void setFib618(double v) { this.fib618 = v; }
+    public double getFib786() { return fib786; }
+    public void setFib786(double v) { this.fib786 = v; }
+    public double getSupportLevel() { return supportLevel; }
+    public void setSupportLevel(double v) { this.supportLevel = v; }
+    public double getResistanceLevel() { return resistanceLevel; }
+    public void setResistanceLevel(double v) { this.resistanceLevel = v; }
     public double getBreakevenStop() { return breakevenStop; }
     public void setBreakevenStop(double v) { this.breakevenStop = v; }
     public double getRiskPerShare() { return riskPerShare; }
@@ -101,6 +144,18 @@ public class TradingSignalResult {
         public Builder tp3(double v) { r.tp3 = v; return this; }
         public Builder tp4(double v) { r.tp4 = v; return this; }
         public Builder tp5(double v) { r.tp5 = v; return this; }
+        public Builder bollingerUpper(double v) { r.bollingerUpper = v; return this; }
+        public Builder bollingerMiddle(double v) { r.bollingerMiddle = v; return this; }
+        public Builder bollingerLower(double v) { r.bollingerLower = v; return this; }
+        public Builder fibSwingHigh(double v) { r.fibSwingHigh = v; return this; }
+        public Builder fibSwingLow(double v) { r.fibSwingLow = v; return this; }
+        public Builder fib236(double v) { r.fib236 = v; return this; }
+        public Builder fib382(double v) { r.fib382 = v; return this; }
+        public Builder fib500(double v) { r.fib500 = v; return this; }
+        public Builder fib618(double v) { r.fib618 = v; return this; }
+        public Builder fib786(double v) { r.fib786 = v; return this; }
+        public Builder supportLevel(double v) { r.supportLevel = v; return this; }
+        public Builder resistanceLevel(double v) { r.resistanceLevel = v; return this; }
         public Builder breakevenStop(double v) { r.breakevenStop = v; return this; }
         public Builder riskPerShare(double v) { r.riskPerShare = v; return this; }
         public Builder riskRewardRatio(double v) { r.riskRewardRatio = v; return this; }

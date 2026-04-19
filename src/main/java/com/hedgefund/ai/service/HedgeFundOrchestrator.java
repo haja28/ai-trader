@@ -6,6 +6,7 @@ import com.hedgefund.ai.model.agent.AgentState;
 import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.agent.PortfolioDecision;
 import com.hedgefund.ai.service.agents.*;
+import com.hedgefund.ai.service.api.MarketAuxClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +26,7 @@ public class HedgeFundOrchestrator {
     private final RiskManagerAgent riskManagerAgent;
     private final PortfolioManagerAgent portfolioManagerAgent;
     private final ReportGeneratorService reportGeneratorService;
+    private final MarketAuxClient marketAuxClient;
 
     @Value("${hedgefund.default-model-name:gpt-4.1}")
     private String defaultModelName;
@@ -42,10 +44,12 @@ public class HedgeFundOrchestrator {
             List<AnalystAgent> agents,
             RiskManagerAgent riskManagerAgent,
             PortfolioManagerAgent portfolioManagerAgent,
-            ReportGeneratorService reportGeneratorService) {
+            ReportGeneratorService reportGeneratorService,
+            MarketAuxClient marketAuxClient) {
         this.riskManagerAgent = riskManagerAgent;
         this.portfolioManagerAgent = portfolioManagerAgent;
         this.reportGeneratorService = reportGeneratorService;
+        this.marketAuxClient = marketAuxClient;
         this.agentRegistry = new LinkedHashMap<>();
         for (AnalystAgent agent : agents) {
             this.agentRegistry.put(agent.getAgentId(), agent);
@@ -64,6 +68,19 @@ public class HedgeFundOrchestrator {
 
         // Step 1: Run analyst agents in parallel
         log.info("Running " + selectedKeys.size() + " analysts in parallel...");
+
+        // Pre-fetch MarketAux news for all tickers (single API call).
+        // This populates the per-ticker cache so all agents share the same data
+        // without making redundant API calls.
+        marketAuxClient.clearCache();
+        if (marketAuxClient.isConfigured()) {
+            try {
+                marketAuxClient.fetchNews(state.getTickers(), 50);
+            } catch (Exception e) {
+                log.warning("MarketAux pre-fetch failed (agents will retry individually): " + e.getMessage());
+            }
+        }
+
         ExecutorService executor = Executors.newFixedThreadPool(
                 Math.min(selectedKeys.size(), Runtime.getRuntime().availableProcessors()));
 
@@ -76,9 +93,14 @@ public class HedgeFundOrchestrator {
 
         for (var entry : futures.entrySet()) {
             try {
-                Map<String, AnalystSignal> signals = entry.getValue().get(120, TimeUnit.SECONDS);
+                long start = System.currentTimeMillis();
+                Map<String, AnalystSignal> signals = entry.getValue().get(300, TimeUnit.SECONDS);
+                long elapsed = System.currentTimeMillis() - start;
                 state.getAnalystSignals().put(entry.getKey(), signals);
-                log.info("✓ " + entry.getKey() + " completed");
+                log.info("✓ " + entry.getKey() + " completed in " + elapsed + "ms");
+            } catch (TimeoutException e) {
+                log.log(Level.SEVERE, "✗ " + entry.getKey() + " timed out after 300s");
+                entry.getValue().cancel(true);
             } catch (Exception e) {
                 log.log(Level.SEVERE, "✗ " + entry.getKey() + " failed: " + e.getMessage(), e);
             }

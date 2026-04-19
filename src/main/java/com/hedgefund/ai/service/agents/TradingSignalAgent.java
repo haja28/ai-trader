@@ -5,6 +5,9 @@ import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.agent.TradingSignalResult;
 import com.hedgefund.ai.model.api.Price;
 import com.hedgefund.ai.service.api.FinancialDataClient;
+import com.hedgefund.ai.service.api.MarketAuxClient;
+import com.hedgefund.ai.service.api.MarketAuxClient.NewsSentimentScore;
+import com.hedgefund.ai.model.api.MarketAuxResponse;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -44,6 +47,7 @@ public class TradingSignalAgent implements AnalystAgent {
 
     private static final Logger log = Logger.getLogger(TradingSignalAgent.class.getName());
     private final FinancialDataClient apiClient;
+    private final MarketAuxClient marketAuxClient;
 
     // ── Configurable parameters (Swing / Daily defaults) ──
     private static final int    FAST_EMA_PERIOD       = 9;
@@ -68,8 +72,9 @@ public class TradingSignalAgent implements AnalystAgent {
     private static final double WEIGHT_F8_REGIME            = 1.5;
     private static final double WEIGHT_F9_HTF_PROXY         = 1.3;
     private static final double WEIGHT_F10_REL_STRENGTH     = 1.0;
+    private static final double WEIGHT_F11_NEWS_SENTIMENT   = 1.2;  // MarketAux news sentiment
 
-    private static final double WEIGHTED_SCORE_MAX          = 10.0;
+    private static final double WEIGHTED_SCORE_MAX          = 11.2; // updated for 11 factors
     private static final double WEIGHTED_SCORE_THRESHOLD    = 6.2;
     private static final double WEIGHTED_SCORE_CROSS_TH     = 5.6;
 
@@ -82,13 +87,14 @@ public class TradingSignalAgent implements AnalystAgent {
     private static final int    EMA_HTF_FAST                = 50;
     private static final int    EMA_HTF_SLOW                = 100;
 
-    public TradingSignalAgent(FinancialDataClient apiClient) {
+    public TradingSignalAgent(FinancialDataClient apiClient, MarketAuxClient marketAuxClient) {
         this.apiClient = apiClient;
+        this.marketAuxClient = marketAuxClient;
     }
 
     @Override public String getAgentId()    { return "trading_signal"; }
     @Override public String getDisplayName(){ return "Sniper Confluence Agent"; }
-    @Override public String getDescription(){ return "7-Factor Confluence Entry/Exit — LONG/SHORT with TP1-TP5, ATR Stop-Loss & Breakeven Trailing"; }
+    @Override public String getDescription(){ return "11-Factor Confluence Entry/Exit — LONG/SHORT with News Sentiment, TP1-TP5, ATR Stop-Loss & Breakeven Trailing"; }
 
     // ════════════════════════════════════════════════════════════
     //  MAIN ANALYSIS
@@ -321,6 +327,43 @@ public class TradingSignalAgent implements AnalystAgent {
                     "ret60_pct", r2(ret60 * 100.0)
             ));
 
+            // Factor 11: MarketAux News Sentiment
+            NewsSentimentScore newsSentiment = null;
+            boolean f11 = false;
+            try {
+                MarketAuxResponse newsResponse = marketAuxClient.fetchNews(ticker);
+                newsSentiment = marketAuxClient.computeSentiment(ticker, newsResponse.getData());
+                // News confirms direction: bullish sentiment for longs, bearish for shorts
+                f11 = directionIsLong
+                        ? "bullish".equals(newsSentiment.signal())
+                        : "bearish".equals(newsSentiment.signal());
+            } catch (Exception e) {
+                log.warning("MarketAux news fetch failed for " + ticker + ": " + e.getMessage());
+                newsSentiment = new NewsSentimentScore(0, 0, 0, 0, 0, "neutral", "API error", java.util.Collections.emptyList());
+            }
+            if (f11) { weightedScore += WEIGHT_F11_NEWS_SENTIMENT; }
+            // Build articles list for report (title + url + sentiment)
+            List<Map<String, Object>> newsArticlesList = new ArrayList<>();
+            for (var art : newsSentiment.articles()) {
+                Map<String, Object> artMap = new LinkedHashMap<>();
+                artMap.put("title", art.title());
+                artMap.put("url", art.url());
+                artMap.put("source", art.source());
+                artMap.put("sentiment", art.sentimentLabel());
+                newsArticlesList.add(artMap);
+            }
+            Map<String, Object> f11Details = new LinkedHashMap<>();
+            f11Details.put("pass", f11);
+            f11Details.put("signal", newsSentiment.signal());
+            f11Details.put("avg_sentiment", r2(newsSentiment.avgSentiment()));
+            f11Details.put("article_count", newsSentiment.articleCount());
+            f11Details.put("bullish_articles", newsSentiment.bullishCount());
+            f11Details.put("bearish_articles", newsSentiment.bearishCount());
+            f11Details.put("neutral_articles", newsSentiment.neutralCount());
+            f11Details.put("details", newsSentiment.details());
+            f11Details.put("articles", newsArticlesList);
+            factorDetails.put("11_news_sentiment", f11Details);
+
             boolean gateAtr = atrPct >= GATE_MIN_ATR_PCT && atrPct <= GATE_MAX_ATR_PCT;
             boolean gateAdx = adxValue >= GATE_MIN_ADX;
             boolean hardGatesPass = gateAtr && gateAdx;
@@ -336,6 +379,61 @@ public class TradingSignalAgent implements AnalystAgent {
             if (bullishCross && !directionIsLong && weightedScore < WEIGHTED_SCORE_CROSS_TH) { directionIsLong = true; }
 
             String position = directionIsLong ? "LONG" : "SHORT";
+
+            // ─── Bollinger Bands (20, 2σ) ───
+            int bbPeriod = 20;
+            double bbMean = 0, bbStd = 0;
+            int bbStart = Math.max(0, n - bbPeriod);
+            int bbCount = n - bbStart;
+            for (int i = bbStart; i < n; i++) bbMean += closes[i];
+            bbMean /= bbCount;
+            for (int i = bbStart; i < n; i++) bbStd += Math.pow(closes[i] - bbMean, 2);
+            bbStd = Math.sqrt(bbStd / bbCount);
+            double bbUpper = bbMean + 2 * bbStd;
+            double bbLower = bbMean - 2 * bbStd;
+            double bbMiddle = bbMean;
+
+            // ─── Fibonacci Retracement (swing high/low over lookback) ───
+            int fibLookback = Math.min(50, n);
+            double swingHigh = Double.MIN_VALUE, swingLow = Double.MAX_VALUE;
+            for (int i = n - fibLookback; i < n; i++) {
+                if (highs[i] > swingHigh) swingHigh = highs[i];
+                if (lows[i] < swingLow) swingLow = lows[i];
+            }
+            double fibRange = swingHigh - swingLow;
+            // In downtrend: retracement from high (levels = high - range * ratio → support below)
+            // In uptrend: retracement from low (levels = low + range * ratio → resistance above)
+            double fib236, fib382, fib500, fib618, fib786;
+            if (!directionIsLong) {
+                // Downtrend: Fib levels are potential support (bounce) zones below price
+                fib236 = swingHigh - fibRange * 0.236;
+                fib382 = swingHigh - fibRange * 0.382;
+                fib500 = swingHigh - fibRange * 0.500;
+                fib618 = swingHigh - fibRange * 0.618;
+                fib786 = swingHigh - fibRange * 0.786;
+            } else {
+                // Uptrend: Fib levels are pullback support zones
+                fib236 = swingHigh - fibRange * 0.236;
+                fib382 = swingHigh - fibRange * 0.382;
+                fib500 = swingHigh - fibRange * 0.500;
+                fib618 = swingHigh - fibRange * 0.618;
+                fib786 = swingHigh - fibRange * 0.786;
+            }
+
+            // ─── Key Support & Resistance ───
+            // Support = strongest floor (max of BB lower, Fib 0.618)
+            // Resistance = strongest ceiling (min of BB upper, Fib 0.236)
+            double supportLevel, resistanceLevel;
+            if (!directionIsLong) {
+                // Downtrend: support is where price may bounce
+                // Use the HIGHER of BB lower and Fib 0.618 (stronger support = closer to price)
+                supportLevel = Math.max(bbLower, fib618);
+                resistanceLevel = Math.min(bbUpper, fib236);
+            } else {
+                // Uptrend: support is pullback zone
+                supportLevel = Math.max(bbLower, fib382);
+                resistanceLevel = Math.min(bbUpper, swingHigh);
+            }
 
             // ─── Entry / SL / TP (R-based) ───
             double entry = currentPrice; // bar-close entry
@@ -364,6 +462,7 @@ public class TradingSignalAgent implements AnalystAgent {
                     + 0.55 * weightedScore
                     + 0.35 * ((bullishCross || bearishCross) ? 1.0 : 0.0)
                     + 0.40 * (regimePass ? 1.0 : 0.0)
+                    + 0.30 * (f11 ? 1.0 : 0.0)  // news sentiment boost
                     - 0.45 * (eventRisk ? 1.0 : 0.0);
 
             double probability = 1.0 / (1.0 + Math.exp(-z));
@@ -424,6 +523,21 @@ public class TradingSignalAgent implements AnalystAgent {
             indicators.put("plus_di", r2(plusDI));
             indicators.put("minus_di", r2(minusDI));
             indicators.put("vwap", r2(vwap));
+            indicators.put("bb_upper", r2(bbUpper));
+            indicators.put("bb_middle", r2(bbMiddle));
+            indicators.put("bb_lower", r2(bbLower));
+            indicators.put("fib_swing_high", r2(swingHigh));
+            indicators.put("fib_swing_low", r2(swingLow));
+            indicators.put("fib_236", r2(fib236));
+            indicators.put("fib_382", r2(fib382));
+            indicators.put("fib_500", r2(fib500));
+            indicators.put("fib_618", r2(fib618));
+            indicators.put("fib_786", r2(fib786));
+            indicators.put("support_level", r2(supportLevel));
+            indicators.put("resistance_level", r2(resistanceLevel));
+            indicators.put("news_sentiment", r2(newsSentiment.avgSentiment()));
+            indicators.put("news_signal", newsSentiment.signal());
+            indicators.put("news_articles", newsSentiment.articleCount());
             reasoning.put("indicators", indicators);
 
             reasoning.put("risk_management", Map.of(
@@ -433,13 +547,28 @@ public class TradingSignalAgent implements AnalystAgent {
                     "trailing_stop_rule", "SL moves to entry (breakeven) after TP1 is hit"
             ));
 
-            reasoning.put("levels", Map.of(
-                    "entry", r2(entry),
-                    "stop_loss", r2(stopLoss),
-                    "TP1_1R", r2(tp[0]), "TP2_2R", r2(tp[1]), "TP3_3R", r2(tp[2]),
-                    "TP4_4R", r2(tp[3]), "TP5_5R", r2(tp[4]),
-                    "risk_reward_ratio", rrr
-            ));
+            Map<String, Object> levelsMap = new LinkedHashMap<>();
+            levelsMap.put("entry", r2(entry));
+            levelsMap.put("stop_loss", r2(stopLoss));
+            levelsMap.put("TP1_1R", r2(tp[0]));
+            levelsMap.put("TP2_2R", r2(tp[1]));
+            levelsMap.put("TP3_3R", r2(tp[2]));
+            levelsMap.put("TP4_4R", r2(tp[3]));
+            levelsMap.put("TP5_5R", r2(tp[4]));
+            levelsMap.put("risk_reward_ratio", rrr);
+            levelsMap.put("bollinger_upper", r2(bbUpper));
+            levelsMap.put("bollinger_middle", r2(bbMiddle));
+            levelsMap.put("bollinger_lower", r2(bbLower));
+            levelsMap.put("fib_swing_high", r2(swingHigh));
+            levelsMap.put("fib_swing_low", r2(swingLow));
+            levelsMap.put("fib_236", r2(fib236));
+            levelsMap.put("fib_382", r2(fib382));
+            levelsMap.put("fib_500", r2(fib500));
+            levelsMap.put("fib_618", r2(fib618));
+            levelsMap.put("fib_786", r2(fib786));
+            levelsMap.put("support", r2(supportLevel));
+            levelsMap.put("resistance", r2(resistanceLevel));
+            reasoning.put("levels", levelsMap);
 
             // ─── Build TradingSignalResult ───
             // Note: Don't embed 'reasoning' inside TradingSignalResult to avoid
@@ -450,6 +579,10 @@ public class TradingSignalAgent implements AnalystAgent {
                     .entryPoint(r2(entry))
                     .stopLoss(r2(stopLoss))
                     .tp1(r2(tp[0])).tp2(r2(tp[1])).tp3(r2(tp[2])).tp4(r2(tp[3])).tp5(r2(tp[4]))
+                    .bollingerUpper(r2(bbUpper)).bollingerMiddle(r2(bbMiddle)).bollingerLower(r2(bbLower))
+                    .fibSwingHigh(r2(swingHigh)).fibSwingLow(r2(swingLow))
+                    .fib236(r2(fib236)).fib382(r2(fib382)).fib500(r2(fib500)).fib618(r2(fib618)).fib786(r2(fib786))
+                    .supportLevel(r2(supportLevel)).resistanceLevel(r2(resistanceLevel))
                     .breakevenStop(r2(breakevenStop))
                     .riskPerShare(r2(riskPerShare))
                     .riskRewardRatio(rrr)
@@ -457,7 +590,7 @@ public class TradingSignalAgent implements AnalystAgent {
                     .confluenceThreshold(MIN_CONFLUENCE_SCORE)
                     .signalFired(signalFired)
                     .confidence(confidence)
-                    .algorithm("Sniper Confluence V2 (Weighted 10-Factor + Regime/Gates + Logistic Confidence)")
+                    .algorithm("Sniper Confluence V2 (Weighted 11-Factor + News Sentiment + Regime/Gates + Logistic Confidence)")
                     .build();
 
             // Wrap in AnalystSignal

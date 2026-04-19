@@ -1,4 +1,5 @@
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\AiHedgeFundApplication.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\analysis\LotteryAnalysis.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\cache\ApiCache.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\AiConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\FinancialDataProviderConfig.java
@@ -14,6 +15,7 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\a
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\api\FinancialMetrics.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\api\InsiderTrade.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\api\LineItem.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\api\MarketAuxResponse.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\api\Price.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\HedgeFundRequest.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\HedgeFundResponse.java
@@ -31,6 +33,7 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\EodhdClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\FinancialDataClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\FinancialDatasetsClient.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\MarketAuxClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\HedgeFundOrchestrator.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\LlmService.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\PdfReportService.java

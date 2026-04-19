@@ -65,6 +65,16 @@ public class PortfolioManagerAgent {
 
         if (tickersForLlm.isEmpty()) return decisions;
 
+        // For Ollama (local models): use rule-based decisions to avoid 60-120s LLM call.
+        // The LLM is only needed for nuanced reasoning; the signals+allowed actions are enough.
+        if ("OLLAMA".equalsIgnoreCase(state.getModelProvider())) {
+            log.info("Using rule-based portfolio decisions for Ollama (skipping LLM for speed)");
+            for (String t : tickersForLlm) {
+                decisions.put(t, ruleBasedDecision(t, signalsByTicker.get(t), allowedByTicker.get(t)));
+            }
+            return decisions;
+        }
+
         // Ask LLM
         String systemPrompt = """
             You are a portfolio manager.
@@ -167,5 +177,60 @@ public class PortfolioManagerAgent {
         } catch (Exception e) {
             return obj.toString();
         }
+    }
+
+    /**
+     * Rule-based portfolio decision using analyst signal consensus.
+     * Used when Ollama is the provider to avoid slow LLM calls.
+     */
+    @SuppressWarnings("unchecked")
+    private PortfolioDecision ruleBasedDecision(String ticker, Object signalsObj, Map<String, Integer> allowed) {
+        int bullish = 0, bearish = 0, total = 0;
+        double maxConf = 0;
+
+        if (signalsObj instanceof Map<?, ?> signals) {
+            for (var entry : signals.entrySet()) {
+                if (entry.getValue() instanceof Map<?, ?> sigMap) {
+                    String sig = sigMap.get("sig") != null ? String.valueOf(sigMap.get("sig")) : "neutral";
+                    double conf = sigMap.get("conf") instanceof Number n ? n.doubleValue() : 0;
+                    total++;
+                    maxConf = Math.max(maxConf, conf);
+                    if ("bullish".equalsIgnoreCase(sig) || "BUY".equalsIgnoreCase(sig)) bullish++;
+                    else if ("bearish".equalsIgnoreCase(sig) || "SELL".equalsIgnoreCase(sig)) bearish++;
+                }
+            }
+        }
+
+        String action;
+        int quantity;
+        String reasoning;
+
+        if (bullish > bearish && bullish >= 2 && allowed.containsKey("buy")) {
+            action = "buy";
+            // Scale quantity by consensus strength
+            int maxQty = allowed.get("buy");
+            double strength = (double) bullish / total;
+            quantity = Math.max(1, (int) (maxQty * strength * 0.5)); // conservative: 50% of max
+            reasoning = String.format("Bullish consensus (%d/%d analysts), confidence %.0f%%", bullish, total, maxConf);
+        } else if (bearish > bullish && bearish >= 2 && allowed.containsKey("short")) {
+            action = "short";
+            int maxQty = allowed.get("short");
+            double strength = (double) bearish / total;
+            quantity = Math.max(1, (int) (maxQty * strength * 0.5));
+            reasoning = String.format("Bearish consensus (%d/%d analysts), confidence %.0f%%", bearish, total, maxConf);
+        } else if (bearish > bullish && bearish >= 2 && allowed.containsKey("sell")) {
+            action = "sell";
+            quantity = allowed.get("sell");
+            reasoning = String.format("Bearish consensus (%d/%d analysts), exit position", bearish, total);
+        } else {
+            action = "hold";
+            quantity = 0;
+            reasoning = String.format("No strong consensus (bull=%d bear=%d/%d)", bullish, bearish, total);
+        }
+
+        return PortfolioDecision.builder()
+                .action(action).quantity(quantity)
+                .confidence((int) maxConf)
+                .reasoning(reasoning).build();
     }
 }
