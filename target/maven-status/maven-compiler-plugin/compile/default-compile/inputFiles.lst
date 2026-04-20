@@ -4,6 +4,8 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\cache\A
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\AiConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\FinancialDataProviderConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\JacksonConfig.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\PersistenceConfig.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\controller\AnalysisHistoryController.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\controller\HedgeFundController.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\agent\AgentState.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\agent\AnalystSignal.java
@@ -19,6 +21,11 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\a
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\api\Price.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\HedgeFundRequest.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\HedgeFundResponse.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\persistence\AnalysisRun.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\persistence\AnalystResult.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\persistence\TickerAnalysis.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\repository\AnalysisRunRepository.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\repository\TickerAnalysisRepository.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\AnalystAgent.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\FundamentalsAnalystAgent.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\GrowthAnalystAgent.java
@@ -30,6 +37,7 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\TradingSignalAgent.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\ValuationAnalystAgent.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\agents\WarrenBuffettAgent.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\AnalysisPersistenceService.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\EodhdClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\FinancialDataClient.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\service\api\FinancialDatasetsClient.java

@@ -7,6 +7,7 @@ import com.hedgefund.ai.model.agent.AnalystSignal;
 import com.hedgefund.ai.model.agent.PortfolioDecision;
 import com.hedgefund.ai.service.agents.*;
 import com.hedgefund.ai.service.api.MarketAuxClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +28,10 @@ public class HedgeFundOrchestrator {
     private final PortfolioManagerAgent portfolioManagerAgent;
     private final ReportGeneratorService reportGeneratorService;
     private final MarketAuxClient marketAuxClient;
+
+    /** Optional — only present when hedgefund.persistence.enabled=true */
+    @Autowired(required = false)
+    private AnalysisPersistenceService persistenceService;
 
     @Value("${hedgefund.default-model-name:gpt-4.1}")
     private String defaultModelName;
@@ -133,6 +138,15 @@ public class HedgeFundOrchestrator {
         String report = reportGeneratorService.generateReport(
                 response, request.getTickers(), state.getModelProvider(), state.getModelName());
         response.setReport(report);
+
+        // Step 5: Persist to database (if enabled)
+        if (persistenceService != null) {
+            try {
+                persistenceService.saveAnalysis(request, response);
+            } catch (Exception e) {
+                log.log(Level.WARNING, "Failed to persist analysis (non-critical): " + e.getMessage());
+            }
+        }
 
         log.info("Hedge fund analysis complete.");
         return response;
