@@ -1,0 +1,320 @@
+//@version=6
+strategy("Confluence Signal Strategy", shorttitle="CSS-S", overlay=true,
+     initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1,
+     commission_type=strategy.commission.percent, commission_value=0.05, slippage=2,
+     calc_on_every_tick=false, process_orders_on_close=false, pyramiding=0, max_labels_count=100)
+
+// Same signal logic as the indicator (sections 1-5). Orders fill on the NEXT bar open
+// (no lookahead). Exit levels are ATR-based from the signal-bar close.
+
+// ---------------- Inputs ----------------
+preset     = input.string("Swing", "Preset", options=["Intraday", "Swing", "Position", "Custom"])
+iPivot     = input.int(5, "Custom: pivot length", minval=2)
+iAtrMult   = input.float(2.0, "Custom: stop ATR multiple", minval=0.5, step=0.1)
+iTrailMult = input.float(3.0, "Custom: trail ATR multiple", minval=0.5, step=0.1)
+iRvol      = input.float(1.3, "Custom: RVOL threshold", minval=1.0, step=0.1)
+strongTh   = input.float(85, "STRONG threshold")
+buyTh      = input.float(70, "BUY/SELL threshold")
+watchTh    = input.float(55, "WATCH threshold")
+minEdge    = input.float(15, "Min. score edge")
+exitBelow  = input.float(40, "Exit when own score below")
+useHtf     = input.bool(true, "HTF confirmation")
+htfInput   = input.timeframe("", "HTF (blank = auto)")
+allowLong  = input.bool(true, "Allow longs")
+allowShort = input.bool(true, "Allow shorts")
+useTrail   = input.bool(true, "Trailing stop")
+riskPct    = input.float(1.0, "Risk per trade (% equity)", minval=0.1, step=0.1)
+maxLev     = input.float(1.0, "Max notional / equity", minval=0.1, step=0.1)
+useGapBlock = input.bool(true, "Block signals on gap bars")
+
+pivotLen  = switch preset
+    "Intraday" => 3
+    "Swing"    => 5
+    "Position" => 8
+    => iPivot
+atrMult   = switch preset
+    "Intraday" => 1.5
+    "Swing"    => 2.0
+    "Position" => 3.0
+    => iAtrMult
+trailMult = switch preset
+    "Intraday" => 2.0
+    "Swing"    => 3.0
+    "Position" => 4.0
+    => iTrailMult
+rvolTh    = switch preset
+    "Intraday" => 1.5
+    "Swing"    => 1.3
+    "Position" => 1.2
+    => iRvol
+
+// ---------------- Indicators ----------------
+e9 = ta.ema(close, 9)
+e21 = ta.ema(close, 21)
+e50 = ta.ema(close, 50)
+e200 = ta.ema(close, 200)
+vwapV = ta.vwap(hlc3)
+isIntra = timeframe.isintraday
+rsi = ta.rsi(close, 14)
+[macdL, macdS, hist] = ta.macd(close, 12, 26, 9)
+stK = ta.sma(ta.stoch(rsi, rsi, rsi, 14), 3)
+stD = ta.sma(stK, 3)
+atr = ta.atr(14)
+[bbMid, bbUp, bbLo] = ta.bb(close, 20, 2.0)
+bbw = (bbUp - bbLo) / bbMid
+volExpand = bbw > ta.sma(bbw, 20)
+volMa = ta.sma(nz(volume), 20)
+hasVol = nz(volume) > 0 and volMa > 0
+rvol = hasVol ? volume / volMa : 1.0
+has200 = bar_index >= 200
+warm = bar_index >= 55
+gapBar = useGapBlock and math.abs(open - nz(close[1], open)) > 1.5 * nz(atr[1], atr)
+
+// ---------------- Structure ----------------
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float sh1 = na
+var float sh2 = na
+var float sl1 = na
+var float sl2 = na
+if not na(ph)
+    sh2 := sh1
+    sh1 := ph
+if not na(pl)
+    sl2 := sl1
+    sl1 := pl
+var int structTrend = 0
+var float lastBrokenH = na
+var float lastBrokenL = na
+var float retestUp = na
+var float retestDn = na
+var int retestUpBar = 0
+var int retestDnBar = 0
+bullBreak = not na(sh1) and close > sh1 and close[1] <= sh1 and sh1 != lastBrokenH
+bearBreak = not na(sl1) and close < sl1 and close[1] >= sl1 and sl1 != lastBrokenL
+bullBO = bullBreak and (not hasVol or rvol >= 1.2)
+bearBO = bearBreak and (not hasVol or rvol >= 1.2)
+bullRetest = not na(retestUp) and bar_index > retestUpBar and bar_index - retestUpBar <= 10 and low <= retestUp + 0.25 * atr and close > retestUp
+bearRetest = not na(retestDn) and bar_index > retestDnBar and bar_index - retestDnBar <= 10 and high >= retestDn - 0.25 * atr and close < retestDn
+if bullRetest or (not na(retestUp) and (close < retestUp - atr or bar_index - retestUpBar > 10))
+    retestUp := na
+if bearRetest or (not na(retestDn) and (close > retestDn + atr or bar_index - retestDnBar > 10))
+    retestDn := na
+if bullBreak
+    lastBrokenH := sh1
+    retestUp := sh1
+    retestUpBar := bar_index
+    structTrend := 1
+if bearBreak
+    lastBrokenL := sl1
+    retestDn := sl1
+    retestDnBar := bar_index
+    structTrend := -1
+hhhl = not na(sh2) and not na(sl2) and sh1 > sh2 and sl1 > sl2
+lhll = not na(sh2) and not na(sl2) and sh1 < sh2 and sl1 < sl2
+recBullBO = ta.barssince(bullBO) <= 10
+recBearBO = ta.barssince(bearBO) <= 10
+recBullBr = ta.barssince(bullBreak) <= 10
+recBearBr = ta.barssince(bearBreak) <= 10
+recBullRT = ta.barssince(bullRetest) <= 10
+recBearRT = ta.barssince(bearRetest) <= 10
+recBullX = ta.barssince(ta.crossover(e9, e21)) <= 3
+recBearX = ta.barssince(ta.crossunder(e9, e21)) <= 3
+
+// ---------------- HTF (non-repainting) ----------------
+f_autoHtf() =>
+    sec = timeframe.in_seconds()
+    sec < 900 ? "15" : sec < 3600 ? "60" : sec < 14400 ? "240" : sec < 86400 ? "D" : sec < 604800 ? "W" : "M"
+htf = htfInput == "" ? f_autoHtf() : htfInput
+[hE21, hE50, hC] = request.security(syminfo.tickerid, htf, [ta.ema(close, 21)[1], ta.ema(close, 50)[1], close[1]], lookahead=barmerge.lookahead_off)
+htfDir = na(hE50) ? 0 : (hC > hE50 and hE21 > hE50 ? 1 : hC < hE50 and hE21 < hE50 ? -1 : 0)
+
+// ---------------- Scoring ----------------
+f_score(float dir) =>
+    t = (dir * (close - e50) > 0 ? 8.0 : 0.0) + (has200 and dir * (close - e200) > 0 ? 7.0 : 0.0)
+    stack = dir * (e9 - e21) > 0 and dir * (e21 - e50) > 0
+    half = dir * (e9 - e21) > 0
+    recX = dir > 0 ? recBullX : recBearX
+    t += stack ? 10.0 : half ? (recX ? 7.0 : 5.0) : 0.0
+    m = 0.0
+    m += dir * (rsi - 50) > 0 ? (dir * (rsi - rsi[1]) > 0 ? 8.0 : 4.0) : 0.0
+    m += dir * hist > 0 ? (dir * (hist - hist[1]) > 0 ? 8.0 : 4.0) : 0.0
+    m += dir * (stK - stD) > 0 and (dir > 0 ? stK < 80 : stK > 20) ? 4.0 : 0.0
+    m -= (dir > 0 ? rsi > 80 : rsi < 20) ? 4.0 : 0.0
+    m := math.max(m, 0.0)
+    candle = dir * (close - open) > 0
+    v = 0.0
+    if hasVol and candle
+        v += volume > volMa ? 8.0 : 0.0
+        v += rvol >= rvolTh ? 8.0 : 0.0
+        v += dir * (close - close[1]) > 0 and volume > nz(volume[1]) ? 4.0 : 0.0
+    s = 0.0
+    s += (structTrend == dir or (dir > 0 ? hhhl : lhll)) ? 10.0 : 0.0
+    brk = dir > 0 ? recBullBO : recBearBO
+    brkAny = dir > 0 ? recBullBr : recBearBr
+    s += brk ? 6.0 : brkAny ? 3.0 : 0.0
+    s += (dir > 0 ? recBullRT : recBearRT) ? 4.0 : 0.0
+    w = 0.0
+    w += isIntra and dir * (close - vwapV) > 0 ? 7.0 : 0.0
+    w += dir * (close - bbMid) > 0 ? 4.0 : 0.0
+    w += volExpand and candle ? 4.0 : 0.0
+    t + m + v + s + w
+
+maxScore = 18.0 + (has200 ? 7.0 : 0.0) + 20.0 + (hasVol ? 20.0 : 0.0) + 20.0 + (isIntra ? 15.0 : 8.0)
+bullScore = math.min(100.0, f_score(1.0) / maxScore * 100.0)
+bearScore = math.min(100.0, f_score(-1.0) / maxScore * 100.0)
+
+okBuy = warm and not gapBar and bullScore >= buyTh and bullScore - bearScore >= minEdge and (not useHtf or htfDir >= 0)
+okSell = warm and not gapBar and bearScore >= buyTh and bearScore - bullScore >= minEdge and (not useHtf or htfDir <= 0)
+
+// ---------------- Orders ----------------
+var float stopLv = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float entryPx = na
+var int dirTrade = 0
+var bool h1 = false
+
+pos = strategy.position_size
+if pos == 0 and dirTrade != 0 and strategy.opentrades == 0
+    // pending order not filled / trade closed: allow reset (exit orders cleared by engine)
+    dirTrade := 0
+
+riskDist = atrMult * atr
+qty = riskDist > 0 ? math.min(strategy.equity * riskPct / 100 / riskDist, strategy.equity * maxLev / close) : 0.0
+
+newLong = allowLong and okBuy and pos <= 0 and qty > 0 and barstate.isconfirmed
+newShort = allowShort and okSell and pos >= 0 and qty > 0 and barstate.isconfirmed
+
+if newLong
+    dirTrade := 1
+    entryPx := close
+    stopLv := close - riskDist
+    tp1 := close + riskDist
+    tp2 := close + 2 * riskDist
+    tp3 := close + 3 * riskDist
+    h1 := false
+    strategy.entry("L", strategy.long, qty=qty)
+else if newShort
+    dirTrade := -1
+    entryPx := close
+    stopLv := close + riskDist
+    tp1 := close - riskDist
+    tp2 := close - 2 * riskDist
+    tp3 := close - 3 * riskDist
+    h1 := false
+    strategy.entry("S", strategy.short, qty=qty)
+else if dirTrade == 1 and pos > 0
+    if not h1 and high >= tp1
+        h1 := true
+        stopLv := math.max(stopLv, entryPx)
+    if useTrail
+        stopLv := math.max(stopLv, close - trailMult * atr)
+    if bearScore >= watchTh or bullScore < exitBelow
+        strategy.close("L", comment="Exit")
+else if dirTrade == -1 and pos < 0
+    if not h1 and low <= tp1
+        h1 := true
+        stopLv := math.min(stopLv, entryPx)
+    if useTrail
+        stopLv := math.min(stopLv, close + trailMult * atr)
+    if bullScore >= watchTh or bearScore < exitBelow
+        strategy.close("S", comment="Exit")
+
+// Scale-out 40/30/30 with shared stop (one exit order per target)
+if dirTrade == 1
+    strategy.exit("L-T1", "L", qty_percent=40, limit=tp1, stop=stopLv)
+    strategy.exit("L-T2", "L", qty_percent=30, limit=tp2, stop=stopLv)
+    strategy.exit("L-T3", "L", qty_percent=30, limit=tp3, stop=stopLv)
+if dirTrade == -1
+    strategy.exit("S-T1", "S", qty_percent=40, limit=tp1, stop=stopLv)
+    strategy.exit("S-T2", "S", qty_percent=30, limit=tp2, stop=stopLv)
+    strategy.exit("S-T3", "S", qty_percent=30, limit=tp3, stop=stopLv)
+
+plot(e50, "EMA 50", color.new(color.orange, 20))
+plot(e200, "EMA 200", color.new(color.white, 20))
+plot(pos != 0 ? stopLv : na, "Stop / trail", color.red, 1, plot.style_linebr)
+plotshape(newLong, "Long", shape.labelup, location.belowbar, color.green, textcolor=color.white, text="BUY", size=size.small)
+plotshape(newShort, "Short", shape.labeldown, location.abovebar, color.red, textcolor=color.white, text="SELL", size=size.small)
+
+// ---------------- Performance table (long / short split) ----------------
+var int lw = 0
+var int ll = 0
+var int sw = 0
+var int sl = 0
+var float lgp = 0.0
+var float lgl = 0.0
+var float sgp = 0.0
+var float sgl = 0.0
+var int lastN = 0
+n = strategy.closedtrades
+if n > lastN
+    for i = lastN to n - 1
+        p = strategy.closedtrades.profit(i)
+        isLong = strategy.closedtrades.size(i) > 0
+        if isLong
+            if p > 0
+                lw += 1
+                lgp += p
+            else
+                ll += 1
+                lgl += -p
+        else
+            if p > 0
+                sw += 1
+                sgp += p
+            else
+                sl += 1
+                sgl += -p
+    lastN := n
+
+f_pf(float gp, float gl) => gl > 0 ? gp / gl : na
+f_wr(int w, int l) => w + l > 0 ? w / (w + l) * 100 : na
+
+var table perf = table.new(position.bottom_right, 4, 9, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.gray, 60))
+f_c(int c, int r, string t) =>
+    table.cell(perf, c, r, t, text_color=color.white, text_size=size.small)
+
+if barstate.islast
+    totW = strategy.wintrades
+    totL = strategy.losstrades
+    avgW = totW > 0 ? strategy.grossprofit / totW : na
+    avgL = totL > 0 ? strategy.grossloss / totL : na
+    f_c(0, 0, "Metric")
+    f_c(1, 0, "All")
+    f_c(2, 0, "Long")
+    f_c(3, 0, "Short")
+    f_c(0, 1, "Trades")
+    f_c(1, 1, str.tostring(strategy.closedtrades))
+    f_c(2, 1, str.tostring(lw + ll))
+    f_c(3, 1, str.tostring(sw + sl))
+    f_c(0, 2, "Win rate %")
+    f_c(1, 2, str.tostring(f_wr(totW, totL), "#.0"))
+    f_c(2, 2, str.tostring(f_wr(lw, ll), "#.0"))
+    f_c(3, 2, str.tostring(f_wr(sw, sl), "#.0"))
+    f_c(0, 3, "Profit factor")
+    f_c(1, 3, str.tostring(f_pf(strategy.grossprofit, strategy.grossloss), "#.00"))
+    f_c(2, 3, str.tostring(f_pf(lgp, lgl), "#.00"))
+    f_c(3, 3, str.tostring(f_pf(sgp, sgl), "#.00"))
+    f_c(0, 4, "Avg win")
+    f_c(1, 4, str.tostring(avgW, "#.00"))
+    f_c(2, 4, str.tostring(lw > 0 ? lgp / lw : na, "#.00"))
+    f_c(3, 4, str.tostring(sw > 0 ? sgp / sw : na, "#.00"))
+    f_c(0, 5, "Avg loss")
+    f_c(1, 5, str.tostring(avgL, "#.00"))
+    f_c(2, 5, str.tostring(ll > 0 ? lgl / ll : na, "#.00"))
+    f_c(3, 5, str.tostring(sl > 0 ? sgl / sl : na, "#.00"))
+    f_c(0, 6, "Avg R:R")
+    f_c(1, 6, str.tostring(not na(avgW) and not na(avgL) and avgL > 0 ? avgW / avgL : na, "#.00"))
+    f_c(2, 6, str.tostring(lw > 0 and ll > 0 ? (lgp / lw) / (lgl / ll) : na, "#.00"))
+    f_c(3, 6, str.tostring(sw > 0 and sl > 0 ? (sgp / sw) / (sgl / sl) : na, "#.00"))
+    f_c(0, 7, "Max drawdown")
+    f_c(1, 7, str.tostring(strategy.max_drawdown, "#.00"))
+    f_c(2, 7, "")
+    f_c(3, 7, "")
+    f_c(0, 8, "Net profit")
+    f_c(1, 8, str.tostring(strategy.netprofit, "#.00"))
+    f_c(2, 8, str.tostring(lgp - lgl, "#.00"))
+    f_c(3, 8, str.tostring(sgp - sgl, "#.00"))
+

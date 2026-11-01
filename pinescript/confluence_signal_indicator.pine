@@ -1,0 +1,432 @@
+//@version=6
+indicator("Confluence Signal System", shorttitle="CSS", overlay=true, max_labels_count=300, max_bars_back=500)
+
+// =====================================================================
+// 0. INPUTS
+// =====================================================================
+const string G0 = "Preset"
+const string G1 = "Indicators"
+const string G2 = "Scoring"
+const string G3 = "Trade management"
+const string G4 = "Multi-timeframe"
+const string G5 = "Visuals"
+
+preset      = input.string("Swing", "Preset", options=["Intraday", "Swing", "Position", "Custom"], group=G0,
+     tooltip="Intraday / Swing / Position set pivot length, ATR multiples and RVOL threshold. Custom uses the values below.")
+iPivot      = input.int(5, "Custom: pivot length", minval=2, group=G0)
+iAtrMult    = input.float(2.0, "Custom: stop ATR multiple", minval=0.5, step=0.1, group=G0)
+iTrailMult  = input.float(3.0, "Custom: trail ATR multiple", minval=0.5, step=0.1, group=G0)
+iRvol       = input.float(1.3, "Custom: RVOL threshold", minval=1.0, step=0.1, group=G0)
+
+emaFastLen  = input.int(9,   "EMA fast",   group=G1)
+emaMidLen   = input.int(21,  "EMA mid",    group=G1)
+emaSlowLen  = input.int(50,  "EMA slow",   group=G1)
+emaLongLen  = input.int(200, "EMA long",   group=G1)
+rsiLen      = input.int(14,  "RSI length", group=G1)
+atrLen      = input.int(14,  "ATR length", group=G1)
+volMaLen    = input.int(20,  "Volume MA length", group=G1)
+bbLen       = input.int(20,  "Bollinger length", group=G1)
+bbMult      = input.float(2.0, "Bollinger mult", group=G1)
+spikeMult   = input.float(2.0, "Volume spike multiple", group=G1)
+
+strongTh    = input.float(85, "STRONG threshold", minval=1, maxval=100, group=G2)
+buyTh       = input.float(70, "BUY/SELL threshold", minval=1, maxval=100, group=G2)
+watchTh     = input.float(55, "WATCH threshold", minval=1, maxval=100, group=G2)
+minEdge     = input.float(15, "Min. score edge over opposite side", minval=0, group=G2,
+     tooltip="Bull score must exceed bear score by this much (and vice versa). Prevents signals in conflicted markets.")
+exitBelow   = input.float(40, "Exit when own score falls below", group=G2)
+useGapBlock = input.bool(true, "Block signals on gap bars (> 1.5 ATR)", group=G2)
+
+useTrail    = input.bool(true, "Trailing stop", group=G3)
+earlyMode   = input.bool(false, "Early-warning markers (unconfirmed, repaint until bar close)", group=G3)
+
+useHtf      = input.bool(true, "HTF confirmation", group=G4)
+htfInput    = input.timeframe("", "HTF (blank = auto)", group=G4,
+     tooltip="Auto: 5m->15m, 15m->1h, 1h->4h, 4h->D, D->W")
+
+showEma     = input.bool(true,  "EMAs", group=G5)
+showVwap    = input.bool(true,  "VWAP", group=G5)
+showSR      = input.bool(true,  "Support / resistance", group=G5)
+showStruct  = input.bool(true,  "BOS / CHoCH labels", group=G5)
+showBO      = input.bool(true,  "Breakout / retest markers", group=G5)
+showSpike   = input.bool(true,  "Volume spike markers", group=G5)
+showLevels  = input.bool(true,  "Entry / stop / targets", group=G5)
+showBg      = input.bool(false, "Trend background", group=G5)
+showDash    = input.bool(true,  "Dashboard", group=G5)
+
+// Preset resolution
+pivotLen  = switch preset
+    "Intraday" => 3
+    "Swing"    => 5
+    "Position" => 8
+    => iPivot
+atrMult   = switch preset
+    "Intraday" => 1.5
+    "Swing"    => 2.0
+    "Position" => 3.0
+    => iAtrMult
+trailMult = switch preset
+    "Intraday" => 2.0
+    "Swing"    => 3.0
+    "Position" => 4.0
+    => iTrailMult
+rvolTh    = switch preset
+    "Intraday" => 1.5
+    "Swing"    => 1.3
+    "Position" => 1.2
+    => iRvol
+
+// =====================================================================
+// 1. INDICATORS
+// =====================================================================
+e9   = ta.ema(close, emaFastLen)
+e21  = ta.ema(close, emaMidLen)
+e50  = ta.ema(close, emaSlowLen)
+e200 = ta.ema(close, emaLongLen)
+vwapV = ta.vwap(hlc3)
+isIntra = timeframe.isintraday
+
+rsi = ta.rsi(close, rsiLen)
+[macdL, macdS, hist] = ta.macd(close, 12, 26, 9)
+stochSrc = ta.rsi(close, rsiLen)
+stK = ta.sma(ta.stoch(stochSrc, stochSrc, stochSrc, 14), 3)
+stD = ta.sma(stK, 3)
+
+atr = ta.atr(atrLen)
+[bbMid, bbUp, bbLo] = ta.bb(close, bbLen, bbMult)
+bbw = (bbUp - bbLo) / bbMid
+bbwMa = ta.sma(bbw, 20)
+volExpand = bbw > bbwMa
+
+// Edge cases: missing volume / insufficient history
+volMa  = ta.sma(nz(volume), volMaLen)
+hasVol = nz(volume) > 0 and volMa > 0
+rvol   = hasVol ? volume / volMa : 1.0
+has200 = bar_index >= emaLongLen
+warm   = bar_index >= math.max(emaSlowLen, bbLen) + 5
+gapBar = useGapBlock and math.abs(open - nz(close[1], open)) > 1.5 * nz(atr[1], atr)
+spike  = hasVol and rvol >= spikeMult
+
+// =====================================================================
+// 2. MARKET STRUCTURE (pivots are confirmed pivotLen bars late: no repaint)
+// =====================================================================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float sh1 = na
+var float sh2 = na
+var float sl1 = na
+var float sl2 = na
+if not na(ph)
+    sh2 := sh1
+    sh1 := ph
+if not na(pl)
+    sl2 := sl1
+    sl1 := pl
+
+var int   structTrend = 0
+var float lastBrokenH = na
+var float lastBrokenL = na
+var float retestUp = na
+var float retestDn = na
+var int   retestUpBar = 0
+var int   retestDnBar = 0
+
+bullBreak = not na(sh1) and close > sh1 and close[1] <= sh1 and sh1 != lastBrokenH
+bearBreak = not na(sl1) and close < sl1 and close[1] >= sl1 and sl1 != lastBrokenL
+bullCHoCH = bullBreak and structTrend == -1
+bullBOS   = bullBreak and structTrend != -1
+bearCHoCH = bearBreak and structTrend == 1
+bearBOS   = bearBreak and structTrend != 1
+
+// Volume-confirmed vs weak breakouts
+bullBO   = bullBreak and (not hasVol or rvol >= 1.2)
+bearBO   = bearBreak and (not hasVol or rvol >= 1.2)
+weakBull = bullBreak and not bullBO
+weakBear = bearBreak and not bearBO
+
+// Retest: price returns to broken level within 10 bars and holds
+retestBars = 10
+bullRetest = not na(retestUp) and bar_index > retestUpBar and bar_index - retestUpBar <= retestBars and low <= retestUp + 0.25 * atr and close > retestUp
+bearRetest = not na(retestDn) and bar_index > retestDnBar and bar_index - retestDnBar <= retestBars and high >= retestDn - 0.25 * atr and close < retestDn
+if bullRetest or (not na(retestUp) and (close < retestUp - atr or bar_index - retestUpBar > retestBars))
+    retestUp := na
+if bearRetest or (not na(retestDn) and (close > retestDn + atr or bar_index - retestDnBar > retestBars))
+    retestDn := na
+
+if bullBreak
+    lastBrokenH := sh1
+    retestUp := sh1
+    retestUpBar := bar_index
+    structTrend := 1
+if bearBreak
+    lastBrokenL := sl1
+    retestDn := sl1
+    retestDnBar := bar_index
+    structTrend := -1
+
+hhhl = not na(sh2) and not na(sl2) and sh1 > sh2 and sl1 > sl2
+lhll = not na(sh2) and not na(sl2) and sh1 < sh2 and sl1 < sl2
+
+recBullBO = ta.barssince(bullBO) <= 10
+recBearBO = ta.barssince(bearBO) <= 10
+recBullBr = ta.barssince(bullBreak) <= 10
+recBearBr = ta.barssince(bearBreak) <= 10
+recBullRT = ta.barssince(bullRetest) <= 10
+recBearRT = ta.barssince(bearRetest) <= 10
+recBullX  = ta.barssince(ta.crossover(e9, e21)) <= 3
+recBearX  = ta.barssince(ta.crossunder(e9, e21)) <= 3
+
+// =====================================================================
+// 3. HIGHER-TIMEFRAME TREND (no lookahead; uses last CLOSED HTF bar via [1])
+// =====================================================================
+f_autoHtf() =>
+    sec = timeframe.in_seconds()
+    sec < 900 ? "15" : sec < 3600 ? "60" : sec < 14400 ? "240" : sec < 86400 ? "D" : sec < 604800 ? "W" : "M"
+htf = htfInput == "" ? f_autoHtf() : htfInput
+[hE21, hE50, hC] = request.security(syminfo.tickerid, htf, [ta.ema(close, 21)[1], ta.ema(close, 50)[1], close[1]], lookahead=barmerge.lookahead_off)
+htfDir = na(hE50) ? 0 : (hC > hE50 and hE21 > hE50 ? 1 : hC < hE50 and hE21 < hE50 ? -1 : 0)
+
+// =====================================================================
+// 4. CONFLUENCE SCORING  (dir = +1 bull, -1 bear; mirrored logic)
+//    Trend 25 | Momentum 20 | Volume 20 | Structure 20 | VWAP+Volatility 15
+//    Correlated inputs are capped: EMA stack/cross share ONE 10pt bucket,
+//    breakout/BOS/retest share ONE 10pt structure bucket (after trend 10).
+// =====================================================================
+f_score(float dir) =>
+    // --- Trend (max 25; 18 if EMA200 not yet available)
+    t = (dir * (close - e50) > 0 ? 8.0 : 0.0) + (has200 and dir * (close - e200) > 0 ? 7.0 : 0.0)
+    stack = dir * (e9 - e21) > 0 and dir * (e21 - e50) > 0
+    half  = dir * (e9 - e21) > 0
+    recX  = dir > 0 ? recBullX : recBearX
+    t += stack ? 10.0 : half ? (recX ? 7.0 : 5.0) : 0.0
+    // --- Momentum (max 20)
+    m = 0.0
+    m += dir * (rsi - 50) > 0 ? (dir * (rsi - rsi[1]) > 0 ? 8.0 : 4.0) : 0.0
+    m += dir * hist > 0 ? (dir * (hist - hist[1]) > 0 ? 8.0 : 4.0) : 0.0
+    m += dir * (stK - stD) > 0 and (dir > 0 ? stK < 80 : stK > 20) ? 4.0 : 0.0
+    m -= (dir > 0 ? rsi > 80 : rsi < 20) ? 4.0 : 0.0     // overextended penalty
+    m := math.max(m, 0.0)
+    // --- Volume (max 20, requires candle in signal direction)
+    candle = dir * (close - open) > 0
+    v = 0.0
+    if hasVol and candle
+        v += volume > volMa ? 8.0 : 0.0
+        v += rvol >= rvolTh ? 8.0 : 0.0
+        v += dir * (close - close[1]) > 0 and volume > nz(volume[1]) ? 4.0 : 0.0
+    // --- Structure (max 20)
+    s = 0.0
+    s += (structTrend == dir or (dir > 0 ? hhhl : lhll)) ? 10.0 : 0.0
+    brk = dir > 0 ? recBullBO : recBearBO
+    brkAny = dir > 0 ? recBullBr : recBearBr
+    s += brk ? 6.0 : brkAny ? 3.0 : 0.0
+    s += (dir > 0 ? recBullRT : recBearRT) ? 4.0 : 0.0
+    // --- VWAP + volatility (max 15; 8 off-intraday)
+    w = 0.0
+    w += isIntra and dir * (close - vwapV) > 0 ? 7.0 : 0.0
+    w += dir * (close - bbMid) > 0 ? 4.0 : 0.0
+    w += volExpand and candle ? 4.0 : 0.0
+    t + m + v + s + w
+
+maxScore = 18.0 + (has200 ? 7.0 : 0.0) + 20.0 + (hasVol ? 20.0 : 0.0) + 20.0 + (isIntra ? 15.0 : 8.0)
+bullScore = math.min(100.0, f_score(1.0) / maxScore * 100.0)
+bearScore = math.min(100.0, f_score(-1.0) / maxScore * 100.0)
+
+// =====================================================================
+// 5. SIGNALS (confirmed on bar close by default)
+// =====================================================================
+confirmed = barstate.isconfirmed
+okBuy  = warm and not gapBar and bullScore >= buyTh and bullScore - bearScore >= minEdge and (not useHtf or htfDir >= 0)
+okSell = warm and not gapBar and bearScore >= buyTh and bearScore - bullScore >= minEdge and (not useHtf or htfDir <= 0)
+strongBuyC  = okBuy  and bullScore >= strongTh and (not useHtf or htfDir == 1)
+strongSellC = okSell and bearScore >= strongTh and (not useHtf or htfDir == -1)
+
+// =====================================================================
+// 6. TRADE MANAGEMENT STATE MACHINE (evaluated on confirmed bars only)
+// =====================================================================
+var int   tradeDir = 0
+var float entry = na
+var float stopLv = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var bool  h1 = false
+var bool  h2 = false
+var bool  h3 = false
+
+bool buySig = false
+bool sellSig = false
+bool strongBuy = false
+bool strongSell = false
+bool slHit = false
+bool tpHit = false
+bool exitSig = false
+
+if confirmed
+    // 6a. manage existing trade using levels set on earlier bars
+    if tradeDir == 1
+        if low <= stopLv
+            slHit := true
+            tradeDir := 0
+        else
+            if not h1 and high >= tp1
+                h1 := true
+                tpHit := true
+                stopLv := math.max(stopLv, entry)   // breakeven after T1
+            if not h2 and high >= tp2
+                h2 := true
+                tpHit := true
+            if not h3 and high >= tp3
+                h3 := true
+                tpHit := true
+                tradeDir := 0
+            if tradeDir == 1 and useTrail
+                stopLv := math.max(stopLv, close - trailMult * atr)
+            if tradeDir == 1 and (bearScore >= watchTh or bullScore < exitBelow)
+                exitSig := true
+                tradeDir := 0
+    else if tradeDir == -1
+        if high >= stopLv
+            slHit := true
+            tradeDir := 0
+        else
+            if not h1 and low <= tp1
+                h1 := true
+                tpHit := true
+                stopLv := math.min(stopLv, entry)
+            if not h2 and low <= tp2
+                h2 := true
+                tpHit := true
+            if not h3 and low <= tp3
+                h3 := true
+                tpHit := true
+                tradeDir := 0
+            if tradeDir == -1 and useTrail
+                stopLv := math.min(stopLv, close + trailMult * atr)
+            if tradeDir == -1 and (bullScore >= watchTh or bearScore < exitBelow)
+                exitSig := true
+                tradeDir := 0
+    // 6b. new signals (not while same-direction trade is active)
+    if okBuy and tradeDir != 1
+        buySig := true
+        strongBuy := strongBuyC
+        tradeDir := 1
+        entry := close
+        stopLv := close - atrMult * atr
+        tp1 := close + 1 * atrMult * atr
+        tp2 := close + 2 * atrMult * atr
+        tp3 := close + 3 * atrMult * atr
+        h1 := false
+        h2 := false
+        h3 := false
+    else if okSell and tradeDir != -1
+        sellSig := true
+        strongSell := strongSellC
+        tradeDir := -1
+        entry := close
+        stopLv := close + atrMult * atr
+        tp1 := close - 1 * atrMult * atr
+        tp2 := close - 2 * atrMult * atr
+        tp3 := close - 3 * atrMult * atr
+        h1 := false
+        h2 := false
+        h3 := false
+
+earlyBuy  = earlyMode and not confirmed and okBuy and tradeDir != 1
+earlySell = earlyMode and not confirmed and okSell and tradeDir != -1
+
+// =====================================================================
+// 7. VISUALS
+// =====================================================================
+plot(showEma ? e9   : na, "EMA 9",   color.new(color.aqua, 20))
+plot(showEma ? e21  : na, "EMA 21",  color.new(color.yellow, 20))
+plot(showEma ? e50  : na, "EMA 50",  color.new(color.orange, 10), 2)
+plot(showEma ? e200 : na, "EMA 200", color.new(color.white, 10), 2)
+plot(showVwap and isIntra ? vwapV : na, "VWAP", color.new(color.purple, 0), 2)
+plot(showSR ? sh1 : na, "Resistance", color.new(color.red, 40),   1, plot.style_stepline)
+plot(showSR ? sl1 : na, "Support",    color.new(color.green, 40), 1, plot.style_stepline)
+
+bgcolor(showBg ? (structTrend == 1 and e21 > e50 ? color.new(color.green, 92) : structTrend == -1 and e21 < e50 ? color.new(color.red, 92) : na) : na)
+
+plotshape(buySig and not strongBuy,  "BUY",         shape.labelup,   location.belowbar, color.new(color.green, 0), textcolor=color.white, size=size.normal, text="BUY")
+plotshape(strongBuy,                 "STRONG BUY",  shape.labelup,   location.belowbar, color.new(color.green, 0), textcolor=color.white, size=size.large,  text="STRONG\nBUY")
+plotshape(sellSig and not strongSell,"SELL",        shape.labeldown, location.abovebar, color.new(color.red, 0),   textcolor=color.white, size=size.normal, text="SELL")
+plotshape(strongSell,                "STRONG SELL", shape.labeldown, location.abovebar, color.new(color.red, 0),   textcolor=color.white, size=size.large,  text="STRONG\nSELL")
+plotshape(exitSig, "EXIT", shape.xcross, location.top, color.new(color.gray, 0), size=size.tiny, text="EXIT")
+plotshape(earlyBuy,  "Early buy",  shape.circle, location.belowbar, color.new(color.lime, 60), size=size.tiny, text="early?")
+plotshape(earlySell, "Early sell", shape.circle, location.abovebar, color.new(color.orange, 60), size=size.tiny, text="early?")
+
+plotshape(showBO and bullBO,   "Bull breakout", shape.triangleup,   location.belowbar, color.new(color.lime, 0), size=size.tiny, text="BO")
+plotshape(showBO and weakBull, "Weak breakout (low vol)", shape.triangleup, location.belowbar, color.new(color.gray, 0), size=size.tiny, text="weak")
+plotshape(showBO and bearBO,   "Bear breakdown", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.tiny, text="BD")
+plotshape(showBO and weakBear, "Weak breakdown (low vol)", shape.triangledown, location.abovebar, color.new(color.gray, 0), size=size.tiny, text="weak")
+plotshape(showBO and bullRetest, "Bull retest", shape.diamond, location.belowbar, color.new(color.teal, 0), size=size.tiny, text="RT")
+plotshape(showBO and bearRetest, "Bear retest", shape.diamond, location.abovebar, color.new(color.maroon, 0), size=size.tiny, text="RT")
+plotshape(showSpike and spike, "Volume spike", shape.circle, location.bottom, color.new(color.blue, 0), size=size.tiny, text="V")
+
+plot(showLevels and tradeDir != 0 ? entry  : na, "Entry", color.new(color.white, 0), 2, plot.style_linebr)
+plot(showLevels and tradeDir != 0 ? stopLv : na, "Stop / trail", color.new(color.red, 0), 1, plot.style_linebr)
+plot(showLevels and tradeDir != 0 ? tp1 : na, "TP1 (1R)", color.new(color.green, 20), 1, plot.style_linebr)
+plot(showLevels and tradeDir != 0 ? tp2 : na, "TP2 (2R)", color.new(color.green, 40), 1, plot.style_linebr)
+plot(showLevels and tradeDir != 0 ? tp3 : na, "TP3 (3R)", color.new(color.green, 60), 1, plot.style_linebr)
+plotshape(slHit, "Stop hit", shape.xcross, location.absolute, color.new(color.red, 0), size=size.tiny, text="SL")
+plotshape(tpHit, "Target hit", shape.flag, location.abovebar, color.new(color.green, 0), size=size.tiny, text="TP")
+
+if showStruct and bullBOS
+    label.new(bar_index, low, "BOS", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.green, size=size.tiny)
+if showStruct and bullCHoCH
+    label.new(bar_index, low, "CHoCH", style=label.style_label_up, color=color.new(color.lime, 50), textcolor=color.white, size=size.tiny)
+if showStruct and bearBOS
+    label.new(bar_index, high, "BOS", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.red, size=size.tiny)
+if showStruct and bearCHoCH
+    label.new(bar_index, high, "CHoCH", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+
+// =====================================================================
+// 8. DASHBOARD
+// =====================================================================
+cG = color.new(color.green, 20)
+cR = color.new(color.red, 20)
+cN = color.new(color.gray, 40)
+trendTxt = structTrend == 1 and e21 > e50 ? "BULLISH" : structTrend == -1 and e21 < e50 ? "BEARISH" : "SIDEWAYS"
+alignTxt = e9 > e21 and e21 > e50 ? "BULL STACK" : e9 < e21 and e21 < e50 ? "BEAR STACK" : "MIXED"
+macdTxt  = hist > 0 ? (hist > hist[1] ? "BULL ↑" : "BULL ↓") : (hist < hist[1] ? "BEAR ↓" : "BEAR ↑")
+vwapTxt  = isIntra ? (close > vwapV ? "ABOVE" : "BELOW") : "n/a (daily+)"
+structTxt = structTrend == 1 ? (hhhl ? "HH/HL" : "BULL") : structTrend == -1 ? (lhll ? "LH/LL" : "BEAR") : "NEUTRAL"
+htfTxt   = (htfDir == 1 ? "BULL" : htfDir == -1 ? "BEAR" : "FLAT") + " (" + htf + ")"
+dom = bullScore >= bearScore ? 1 : -1
+domScore = math.max(bullScore, bearScore)
+recTxt = domScore >= strongTh ? (dom == 1 ? "STRONG BUY" : "STRONG SELL") : domScore >= buyTh ? (dom == 1 ? "BUY" : "SELL") : domScore >= watchTh ? "WATCH" : "NO TRADE"
+recCol = domScore >= buyTh ? (dom == 1 ? cG : cR) : cN
+tradeTxt = tradeDir == 1 ? "LONG" + (h1 ? " (T1+)" : "") : tradeDir == -1 ? "SHORT" + (h1 ? " (T1+)" : "") : "FLAT"
+
+var table dash = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.new(color.gray, 60))
+f_row(int r, string k, string v, color c) =>
+    table.cell(dash, 0, r, k, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, r, v, text_color=color.white, bgcolor=c, text_size=size.small)
+
+if showDash and barstate.islast
+    f_row(0, "Trend", trendTxt, trendTxt == "BULLISH" ? cG : trendTxt == "BEARISH" ? cR : cN)
+    f_row(1, "EMA align", alignTxt, e9 > e21 and e21 > e50 ? cG : e9 < e21 and e21 < e50 ? cR : cN)
+    f_row(2, "RSI", str.tostring(rsi, "#.0"), rsi > 55 ? cG : rsi < 45 ? cR : cN)
+    f_row(3, "MACD", macdTxt, hist > 0 ? cG : cR)
+    f_row(4, "RVOL", hasVol ? str.tostring(rvol, "#.00") + "x" : "no volume", hasVol ? (rvol >= rvolTh ? (close > open ? cG : cR) : cN) : cN)
+    f_row(5, "VWAP", vwapTxt, isIntra ? (close > vwapV ? cG : cR) : cN)
+    f_row(6, "Structure", structTxt, structTrend == 1 ? cG : structTrend == -1 ? cR : cN)
+    f_row(7, "HTF trend", htfTxt, htfDir == 1 ? cG : htfDir == -1 ? cR : cN)
+    f_row(8, "Bull score", str.tostring(bullScore, "#"), bullScore >= buyTh ? cG : cN)
+    f_row(9, "Bear score", str.tostring(bearScore, "#"), bearScore >= buyTh ? cR : cN)
+    f_row(10, "Signal", recTxt, recCol)
+    f_row(11, "Trade", tradeTxt, tradeDir == 1 ? cG : tradeDir == -1 ? cR : cN)
+
+// =====================================================================
+// 9. ALERTS
+// =====================================================================
+alertcondition(buySig and not strongBuy,   "BUY",         "BUY signal {{ticker}} {{interval}}")
+alertcondition(strongBuy,                  "STRONG BUY",  "STRONG BUY signal {{ticker}} {{interval}}")
+alertcondition(sellSig and not strongSell, "SELL",        "SELL signal {{ticker}} {{interval}}")
+alertcondition(strongSell,                 "STRONG SELL", "STRONG SELL signal {{ticker}} {{interval}}")
+alertcondition(bullBO and confirmed,       "Bullish breakout",  "Bullish breakout {{ticker}} {{interval}}")
+alertcondition(bearBO and confirmed,       "Bearish breakdown", "Bearish breakdown {{ticker}} {{interval}}")
+alertcondition(spike and confirmed,        "Volume spike",      "Volume spike {{ticker}} {{interval}}")
+alertcondition(slHit,                      "Stop-loss hit",     "Stop-loss hit {{ticker}} {{interval}}")
+alertcondition(tpHit,                      "Take-profit hit",   "Take-profit hit {{ticker}} {{interval}}")
+

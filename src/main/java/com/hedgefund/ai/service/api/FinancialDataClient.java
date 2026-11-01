@@ -18,6 +18,15 @@ public interface FinancialDataClient {
     /** Fetch daily OHLCV prices for a ticker in the given date range. */
     List<Price> getPrices(String ticker, String startDate, String endDate);
 
+    /**
+     * Fetch intraday OHLCV bars. {@code interval} is a provider interval such as "5m" or "1h".
+     * {@code Price.time} holds epoch seconds (shifted to exchange-local time) as a string.
+     * Default: unsupported (empty list).
+     */
+    default List<Price> getIntradayPrices(String ticker, String interval, String startDate, String endDate) {
+        return List.of();
+    }
+
     /** Fetch financial metrics (ratios, margins, growth, etc.) for a ticker. */
     List<FinancialMetrics> getFinancialMetrics(String ticker, String endDate, String period, int limit);
 

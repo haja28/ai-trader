@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Signal Chart</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  body{margin:0;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0}
+  header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1e293b}
+  input,select,button{padding:7px 10px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0}
+  button{background:#3b82f6;border:0;font-weight:600;cursor:pointer}
+  label{font-size:13px;color:#94a3b8;white-space:nowrap}
+  #wrap{position:relative}
+  #chart{height:calc(100vh - 56px)}
+  #dash{position:absolute;top:8px;left:8px;z-index:5;background:rgba(15,23,42,.88);border:1px solid #334155;
+        border-radius:8px;font-size:12px;min-width:230px;overflow:hidden}
+  #dash div{display:flex;justify-content:space-between;gap:12px;padding:3px 8px}
+  #dash b{padding:0 6px;border-radius:3px;color:#fff}
+  .g{background:#16a34a}.r{background:#dc2626}.n{background:#64748b}
+  #msg{position:absolute;bottom:34px;left:10px;z-index:5;font-size:13px;color:#fbbf24}
+</style>
+</head>
+<body>
+<header>
+  <input id="t" value="AAPL" size="8">
+  <select id="tf" title="Candle timeframe">
+    <option value="5m">5 min</option><option value="15m">15 min</option><option value="1h">1 hour</option>
+    <option value="4h">4 hour</option><option value="1D" selected>1 day</option>
+  </select>
+  <select id="d" title="History range"></select>
+  <select id="p" title="Preset"><option value="swing">Swing</option><option value="intraday">Intraday</option><option value="position">Position</option></select>
+  <label><input type="checkbox" id="ema" checked> EMAs/VWAP</label>
+  <label><input type="checkbox" id="sr" checked> S/R (3 levels)</label>
+  <label><input type="checkbox" id="st" checked> BOS/CHoCH</label>
+  <label><input type="checkbox" id="bo" checked> Breakouts</label>
+  <label><input type="checkbox" id="lv" checked> Trade levels</label>
+  <button id="go">Load</button>
+  <a href="/" style="color:#94a3b8;font-size:13px">← Dashboard</a>
+</header>
+<div id="wrap"><div id="msg"></div><div id="dash"></div><div id="chart"></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const chart=LightweightCharts.createChart($('chart'),{
+  layout:{background:{color:'#0f172a'},textColor:'#cbd5e1'},
+  grid:{vertLines:{color:'#1e293b'},horzLines:{color:'#1e293b'}},
+  timeScale:{borderColor:'#334155'},rightPriceScale:{borderColor:'#334155'},
+  crosshair:{mode:LightweightCharts.CrosshairMode.Normal}});
+new ResizeObserver(()=>chart.applyOptions({width:$('chart').clientWidth,height:$('chart').clientHeight})).observe($('chart'));
+
+const candle=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderVisible:false,wickUpColor:'#22c55e',wickDownColor:'#ef4444'});
+const vol=chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'vol'});
+chart.priceScale('vol').applyOptions({scaleMargins:{top:.85,bottom:0}});
+const line=(color,w=1,style=0)=>chart.addLineSeries({color,lineWidth:w,lineStyle:style,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+const emaS={ema9:line('#22d3ee'),ema21:line('#facc15'),ema50:line('#fb923c',2),ema200:line('#f8fafc',2),vwap:line('#a855f7',2)};
+const ALPHA=[.9,.6,.35];
+const mkLevel=(rgb,i,tag)=>chart.addLineSeries({color:`rgba(${rgb},${ALPHA[i]})`,lineWidth:i==0?2:1,lineStyle:i==0?0:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:tag+(i+1)});
+const resS=[0,1,2].map(i=>mkLevel('239,68,68',i,'R'));
+const supS=[0,1,2].map(i=>mkLevel('34,197,94',i,'S'));
+let tradeLines=[],data=null;
+
+// Daily bars carry "yyyy-MM-dd"; intraday bars carry epoch seconds (exchange-local).
+const T=t=>/^\d+$/.test(t)?Number(t):t;
+const RANGES={'5m':[['5 days',5],['10 days',10],['30 days',30],['100 days',100]],
+  '15m':[['10 days',10],['30 days',30],['60 days',60],['100 days',100]],
+  '1h':[['30 days',30],['90 days',90],['180 days',180],['1 year',365]],
+  '4h':[['90 days',90],['180 days',180],['1 year',365],['500 days',500]],
+  '1D':[['1 year',365],['2 years',730],['5 years',1825]]};
+const DEFAULT={'5m':10,'15m':30,'1h':90,'4h':365,'1D':730};
+function fillRanges(){
+  const tf=$('tf').value;
+  $('d').innerHTML=RANGES[tf].map(([l,v])=>`<option value="${v}" ${v==DEFAULT[tf]?'selected':''}>${l}</option>`).join('');
+  chart.applyOptions({timeScale:{timeVisible:tf!=='1D',secondsVisible:false}});
+}
+
+const pairs=(c,arr)=>arr?c.map((x,i)=>arr[i]==null?null:{time:T(x.time),value:arr[i]}).filter(Boolean):[];
+const cls=s=>/BULL|BUY|ABOVE/.test(s)?'g':/BEAR|SELL/.test(s)?'r':'n';
+
+function markerStyle(m){
+  switch(m.type){
+    case 'BUY':return{position:'belowBar',shape:'arrowUp',color:'#16a34a',text:'BUY',size:2};
+    case 'STRONG_BUY':return{position:'belowBar',shape:'arrowUp',color:'#16a34a',text:'STRONG BUY',size:3};
+    case 'SELL':return{position:'aboveBar',shape:'arrowDown',color:'#dc2626',text:'SELL',size:2};
+    case 'STRONG_SELL':return{position:'aboveBar',shape:'arrowDown',color:'#dc2626',text:'STRONG SELL',size:3};
+    case 'EARLY_BUY':return{position:'belowBar',shape:'circle',color:'#86efac',text:'early BUY',size:1};
+    case 'EARLY_SELL':return{position:'aboveBar',shape:'circle',color:'#fca5a5',text:'early SELL',size:1};
+    case 'EXIT':return{position:'aboveBar',shape:'square',color:'#94a3b8',text:m.text,size:1};
+    case 'SL':return{position:'aboveBar',shape:'circle',color:'#ef4444',text:m.text,size:1};
+    case 'TP':return{position:'aboveBar',shape:'circle',color:'#22c55e',text:m.text,size:1};
+    case 'BOS':case 'CHOCH':return{position:'belowBar',shape:'square',color:m.type=='BOS'?'#84cc16':'#f59e0b',text:m.text,size:0};
+    case 'BREAKOUT':return{position:'aboveBar',shape:'circle',color:'#a3e635',text:m.text,size:0};
+    case 'WEAK_BREAKOUT':return{position:'aboveBar',shape:'circle',color:'#64748b',text:m.text,size:0};
+  }
+  return null;
+}
+
+function redraw(){
+  if(!data)return;
+  const show=id=>$(id).checked;
+  for(const [k,s] of Object.entries(emaS))s.setData(show('ema')?pairs(data.candles,data[k]):[]);
+  resS.forEach((s,i)=>s.setData(show('sr')&&data.resistanceLevels?pairs(data.candles,data.resistanceLevels[i]):[]));
+  supS.forEach((s,i)=>s.setData(show('sr')&&data.supportLevels?pairs(data.candles,data.supportLevels[i]):[]));
+  const ms=data.markers.filter(m=>{
+    if(m.type=='BOS'||m.type=='CHOCH')return show('st');
+    if(m.type=='BREAKOUT'||m.type=='WEAK_BREAKOUT')return show('bo');
+    return markerStyle(m)!=null;
+  }).map(m=>({time:T(m.time),...markerStyle(m)}));
+  // lightweight-charts requires markers sorted by time
+  ms.sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0);
+  candle.setMarkers(ms);
+  tradeLines.forEach(s=>chart.removeSeries(s));tradeLines=[];
+  if(show('lv')){
+    const last=data.candles[data.candles.length-1].time;
+    data.trades.slice(-6).forEach(tr=>{
+      const end=tr.exitTime||last;
+      [[tr.entry,'#f8fafc',0],[tr.stop,'#ef4444',2],[tr.tp1,'#22c55e',2],[tr.tp2,'#16a34a',2],[tr.tp3,'#15803d',2]].forEach(([v,c,st])=>{
+        const s=line(c,1,st);s.setData([{time:T(tr.entryTime),value:v},{time:T(end),value:v}]);tradeLines.push(s);
+      });
+    });
+    const nt=data.summary&&data.summary.nextTrade;
+    if(data.summary&&data.summary.tradeStatus==='FLAT'&&nt&&nt.action!=='NO TRADE'&&data.candles.length>=2){
+      const start=data.candles[Math.max(0,data.candles.length-3)].time;
+      [[nt.entry,'#38bdf8',0],[nt.stop,'#f87171',2],[nt.tp1,'#4ade80',2],[nt.tp2,'#22c55e',2],[nt.tp3,'#16a34a',2]].forEach(([v,c,st])=>{
+        const s=line(c,2,st);s.setData([{time:T(start),value:v},{time:T(last),value:v}]);tradeLines.push(s);
+      });
+    }
+  }
+}
+
+function dash(s){
+  const row=(k,v,c)=>`<div><span>${k}</span><b class="${c}">${v}</b></div>`;
+  let h=
+    row('Trend',s.trend,cls(s.trend))+row('EMA align',s.emaAlignment,cls(s.emaAlignment))+
+    row('RSI',s.rsi.toFixed(1),s.rsi>55?'g':s.rsi<45?'r':'n')+row('MACD',s.macd,cls(s.macd))+
+    row('RVOL',s.rvol.toFixed(2)+'x','n')+row('Structure',s.structure,cls(s.structure))+
+    row('HTF trend',s.htfTrend,cls(s.htfTrend))+
+    row('Bull score',s.bullScore.toFixed(0),s.bullScore>=70?'g':'n')+row('Bear score',s.bearScore.toFixed(0),s.bearScore>=70?'r':'n')+
+    row('Signal',s.recommendation,cls(s.recommendation))+row('Trade',s.tradeStatus,s.tradeStatus=='LONG'?'g':s.tradeStatus=='SHORT'?'r':'n');
+  if(s.nextTrade&&s.nextTrade.action&&s.nextTrade.action!=='NO TRADE'){
+    const nt=s.nextTrade;
+    h+=`<div style="border-top:1px solid #334155;margin-top:2px;padding-top:4px"><span>Next Setup</span><b class="${cls(nt.action)}">${nt.action}</b></div>`+
+       `<div><span>Entry / Risk</span><b class="n">$${nt.entry.toFixed(2)} (R: $${nt.risk.toFixed(2)})</b></div>`+
+       `<div><span>SL / R:R</span><b class="r">$${nt.stop.toFixed(2)} (${nt.riskReward.toFixed(1)}x)</b></div>`+
+       `<div><span>TP1 / TP2 / TP3</span><b class="g">$${nt.tp1.toFixed(2)} / $${nt.tp2.toFixed(2)} / $${nt.tp3.toFixed(2)}</b></div>`;
+  }
+  $('dash').innerHTML=h;
+}
+
+async function load(){
+  $('msg').textContent='Loading…';$('go').disabled=true;
+  try{
+    const r=await fetch(`/api/chart/${encodeURIComponent($('t').value.trim())}?timeframe=${$('tf').value}&days=${$('d').value}&preset=${$('p').value}`);
+    if(!r.ok){let m='HTTP '+r.status;try{m=(await r.json()).message||m}catch(_){}throw new Error(m)}
+    data=await r.json();
+    candle.setData(data.candles.map(c=>({time:T(c.time),open:c.open,high:c.high,low:c.low,close:c.close})));
+    vol.setData(data.candles.map(c=>({time:T(c.time),value:c.volume,color:c.close>=c.open?'rgba(34,197,94,.35)':'rgba(239,68,68,.35)'})));
+    redraw();dash(data.summary);chart.timeScale().fitContent();
+    $('msg').textContent=data.summary.warning||'';
+  }catch(e){$('msg').textContent='Error: '+e.message}
+  $('go').disabled=false;
+}
+$('go').onclick=load;
+$('tf').onchange=()=>{fillRanges();load()};
+$('p').onchange=load;$('d').onchange=load;
+['ema','sr','st','bo','lv'].forEach(id=>$(id).onchange=redraw);
+$('t').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
+fillRanges();load();
+</script>
+</body>
+</html>
+

@@ -134,6 +134,49 @@ public class EodhdClient implements FinancialDataClient {
         }
     }
 
+    /**
+     * EODHD intraday endpoint: GET /intraday/{TICKER.US}?interval=5m|1h&from=unix&to=unix.
+     * Time is stored as epoch seconds + gmtoffset so charts display exchange-local time.
+     */
+    @Override
+    public List<Price> getIntradayPrices(String ticker, String interval, String startDate, String endDate) {
+        String cacheKey = "eodhd_intraday_" + ticker + "_" + interval + "_" + startDate + "_" + endDate;
+        List<Price> cached = cache.get(cacheKey);
+        if (cached != null) return cached;
+        try {
+            String eodhdTicker = toEodhdTicker(ticker);
+            long from = LocalDate.parse(startDate).atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond();
+            long to = LocalDate.parse(endDate).plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond();
+            JsonNode root = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/intraday/{ticker}")
+                            .queryParam("interval", interval)
+                            .queryParam("from", from)
+                            .queryParam("to", to)
+                            .queryParam("fmt", "json")
+                            .queryParam("api_token", apiToken)
+                            .build(eodhdTicker))
+                    .retrieve()
+                    .onStatus(HttpStatusCode::isError, resp -> Mono.empty())
+                    .bodyToMono(JsonNode.class)
+                    .block();
+            if (root == null || !root.isArray()) return List.of();
+            List<Price> out = new ArrayList<>();
+            for (JsonNode n : root) {
+                if (n.path("open").isNull() || n.path("close").isNull() || !n.has("timestamp")) continue;
+                long ts = n.path("timestamp").asLong() + n.path("gmtoffset").asLong(0);
+                out.add(new Price(n.path("open").asDouble(), n.path("close").asDouble(),
+                        n.path("high").asDouble(), n.path("low").asDouble(),
+                        n.path("volume").asLong(0), String.valueOf(ts)));
+            }
+            if (!out.isEmpty()) cache.put(cacheKey, out);
+            return out;
+        } catch (Exception e) {
+            log.log(Level.WARNING, "Error fetching EODHD intraday for " + ticker + ": " + e.getMessage(), e);
+            return List.of();
+        }
+    }
+
     // ======================== Financial Metrics ========================
 
     /**

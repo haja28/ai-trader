@@ -1,11 +1,15 @@
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\AiHedgeFundApplication.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\analysis\LotteryAnalysis.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\cache\ApiCache.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\ChartResult.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\SignalConfig.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\SignalEngine.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\AiConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\FinancialDataProviderConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\JacksonConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\PersistenceConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\controller\AnalysisHistoryController.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\controller\ChartController.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\controller\HedgeFundController.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\agent\AgentState.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\model\agent\AnalystSignal.java
