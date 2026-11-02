@@ -94,16 +94,32 @@ class SignalEngineTest {
     }
 
     @Test
-    void nextTradeSetupPopulated() {
+    void institutionalTrendCyclePopulated() {
         ChartResult r = new SignalEngine().analyze("X", series(400, 0.4), SignalConfig.of("swing"));
-        ChartResult.NextTrade nt = r.summary().nextTrade();
-        assertNotNull(nt);
-        assertNotNull(nt.action());
-        if (!"NO TRADE".equals(nt.action())) {
-            assertTrue(nt.entry() > 0);
-            assertTrue(nt.stop() > 0);
-            assertTrue(nt.tp1() > 0);
-            assertTrue(nt.riskReward() > 0);
-        }
+        assertNotNull(r.institutional());
+        ChartResult.InstitutionalSummary is = r.institutional().summary();
+        assertNotNull(is);
+        assertEquals(400, r.institutional().ema20().size());
+        assertEquals(400, r.institutional().ema50().size());
+        assertEquals(400, r.institutional().ema200().size());
+        assertEquals(400, r.institutional().trailStop().size());
+        assertEquals(400, r.institutional().rsi().size());
+        assertEquals(400, r.institutional().adx().size());
+        assertEquals(400, r.institutional().rvol().size());
+        assertEquals(400, r.institutional().upperResistance().size());
+        assertEquals(400, r.institutional().lowerSupport().size());
+        assertTrue(is.rsi() > 0);
+        assertTrue(is.rvol() > 0);
+        assertTrue(is.atrStopLoss() > 0);
+        assertTrue(is.atrTakeProfit2() > 0);
+        assertTrue(is.minRiskRewardRatio() >= 2.0);
+        assertNotNull(is.divergence());
+        assertNotNull(is.breakoutStatus());
+        assertNotNull(is.htfTrend());
+        assertNotNull(is.scoreRecommendation());
+        assertTrue(is.bullScore() >= 0 && is.bullScore() <= 100);
+        assertTrue(is.bearScore() >= 0 && is.bearScore() <= 100);
+        long bearDivCount = r.institutional().markers().stream().filter(m -> "INST_BEAR_DIV".equals(m.type())).count();
+        assertTrue(bearDivCount <= 10, "Bearish divergence markers should not spam every bar, got: " + bearDivCount);
     }
 }

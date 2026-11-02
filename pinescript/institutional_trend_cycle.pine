@@ -1,0 +1,129 @@
+//@version=6
+indicator("Institutional Trend & Cycle BUY SELL", overlay=true, max_labels_count=500)
+
+// ===== INPUTS =====
+emaFastLen = input.int(20, "Fast EMA")
+emaMidLen  = input.int(50, "Medium EMA")
+emaSlowLen = input.int(200, "Long EMA")
+
+rsiLen     = input.int(14, "RSI Length")
+atrLen     = input.int(14, "ATR Length")
+volLen     = input.int(20, "Volume Average")
+breakLen   = input.int(20, "Breakout Lookback")
+
+// ===== MOVING AVERAGES =====
+ema20  = ta.ema(close, emaFastLen)
+ema50  = ta.ema(close, emaMidLen)
+ema200 = ta.ema(close, emaSlowLen)
+
+plot(ema20, "EMA 20", color=color.orange, linewidth=2)
+plot(ema50, "EMA 50", color=color.white, linewidth=2)
+plot(ema200, "EMA 200", color=color.blue, linewidth=2)
+
+// ===== MOMENTUM =====
+rsi = ta.rsi(close, rsiLen)
+[macdLine, signalLine, hist] = ta.macd(close, 12, 26, 9)
+
+// ===== VOLUME =====
+volAvg = ta.sma(volume, volLen)
+volumeStrong = volume > volAvg * 1.2
+
+// ===== TREND STRENGTH =====
+[plusDI, minusDI, adx] = ta.dmi(14, 14)
+
+bullTrend = ema20 > ema50 and ema50 > ema200 and ema50 > ema50[5]
+
+// ===== ATR =====
+atr = ta.atr(atrLen)
+
+// ===== BUY CONDITIONS =====
+
+// Early trend reversal
+earlyBuy = ta.crossover(close, ema20) and
+     ema20 > ema20[3] and
+     rsi > 50 and
+     macdLine > signalLine and
+     volumeStrong
+
+// Pullback entry in an established uptrend
+pullbackBuy = bullTrend and
+     low <= ema20 and
+     close > ema20 and
+     close[1] <= ema20[1] and
+     rsi > 50 and
+     macdLine > signalLine
+
+// Breakout with volume confirmation
+breakoutBuy = close > ta.highest(high, breakLen)[1] and
+     volumeStrong and
+     rsi > 55 and
+     macdLine > signalLine and
+     adx > 18 and
+     close > ema50
+
+buySignal = (earlyBuy or pullbackBuy or breakoutBuy) and barstate.isconfirmed
+
+// ===== SELL CONDITIONS =====
+
+// Extended price with weakening momentum
+extended = close > ema20 + (2 * atr)
+
+takeProfit = extended and
+     ta.crossunder(rsi, 70) and
+     hist < hist[1]
+
+// Medium-term trend breakdown
+trendExit = ta.crossunder(close, ema50)
+
+sellSignal = (takeProfit or trendExit) and barstate.isconfirmed
+
+// ===== ATR TRAILING STOP =====
+trailStop = ta.highest(high, 22) - (3 * atr)
+
+plot(bullTrend ? trailStop : na,
+     "ATR Trailing Stop",
+     color=color.red,
+     linewidth=2,
+     style=plot.style_linebr)
+
+// ===== BUY / SELL LABELS =====
+plotshape(earlyBuy, title="EARLY BUY",
+     style=shape.labelup, location=location.belowbar,
+     color=color.lime, text="EARLY BUY",
+     textcolor=color.black, size=size.small)
+
+plotshape(pullbackBuy, title="PULLBACK BUY",
+     style=shape.labelup, location=location.belowbar,
+     color=color.green, text="BUY",
+     textcolor=color.white, size=size.small)
+
+plotshape(breakoutBuy, title="BREAKOUT BUY",
+     style=shape.labelup, location=location.belowbar,
+     color=color.aqua, text="BREAKOUT",
+     textcolor=color.black, size=size.small)
+
+plotshape(takeProfit, title="TAKE PROFIT",
+     style=shape.labeldown, location=location.abovebar,
+     color=color.orange, text="PARTIAL SELL",
+     textcolor=color.black, size=size.small)
+
+plotshape(trendExit, title="TREND EXIT",
+     style=shape.labeldown, location=location.abovebar,
+     color=color.red, text="EXIT",
+     textcolor=color.white, size=size.small)
+
+// ===== ALERTS =====
+alertcondition(buySignal, "BUY ALERT",
+     "Potential BUY signal: {{ticker}} at {{close}}")
+
+alertcondition(takeProfit, "TAKE PROFIT ALERT",
+     "Potential partial profit signal: {{ticker}}")
+
+alertcondition(trendExit, "EXIT ALERT",
+     "Trend breakdown: {{ticker}} at {{close}}")
+
+// ===== DATA WINDOW =====
+plot(rsi, "RSI Value", display=display.data_window)
+plot(adx, "ADX Value", display=display.data_window)
+plot(hist, "MACD Histogram", display=display.data_window)
+

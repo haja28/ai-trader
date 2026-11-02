@@ -500,12 +500,15 @@ public class SignalEngine {
         String status = dir == 1 ? "LONG" : dir == -1 ? "SHORT" : "FLAT";
         String warning = n < 200 ? "Fewer than 200 bars: EMA200 not used in scoring." : (hv ? null : "No volume data: volume scoring disabled.");
 
+        ChartResult.InstitutionalData inst = InstitutionalIndicator.calculate(t, o, h, l, c, v, htfDir, htfLabel, resLv, supLv);
+
         return new ChartResult(ticker, cfg.preset(), candles, box(e9), box(e21), box(e50), box(e200), box(vwap),
                 box(resistance), box(support),
                 List.of(box(resLv[0]), box(resLv[1]), box(resLv[2])),
                 List.of(box(supLv[0]), box(supLv[1]), box(supLv[2])), box(bullS), box(bearS), markers, trades,
                 new ChartResult.Summary(trend, align, round(rsi[last]), macdTxt, round(hv ? v[last] / volMa[last] : 1.0),
-                        structure, htf, round(bs), round(rs), rec, status, n, warning, nextTrade));
+                        structure, htf, round(bs), round(rs), rec, status, n, warning, nextTrade),
+                inst);
     }
 
     private static ChartResult.Trade trade(int dir, boolean strong, String entryTime, double entry, double stop,

@@ -35,7 +35,9 @@
   <label><input type="checkbox" id="st" checked> BOS/CHoCH</label>
   <label><input type="checkbox" id="bo" checked> Breakouts</label>
   <label><input type="checkbox" id="lv" checked> Trade levels</label>
+  <label><input type="checkbox" id="inst"> Institutional</label>
   <button id="go">Load</button>
+  <a href="/chart2.html" style="color:#38bdf8;font-size:13px;font-weight:600">Institutional Chart →</a>
   <a href="/" style="color:#94a3b8;font-size:13px">← Dashboard</a>
 </header>
 <div id="wrap"><div id="msg"></div><div id="dash"></div><div id="chart"></div></div>
@@ -53,6 +55,7 @@ const vol=chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'vo
 chart.priceScale('vol').applyOptions({scaleMargins:{top:.85,bottom:0}});
 const line=(color,w=1,style=0)=>chart.addLineSeries({color,lineWidth:w,lineStyle:style,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
 const emaS={ema9:line('#22d3ee'),ema21:line('#facc15'),ema50:line('#fb923c',2),ema200:line('#f8fafc',2),vwap:line('#a855f7',2)};
+const instS={ema20:line('#f97316',2),trailStop:line('#ef4444',2,2)};
 const ALPHA=[.9,.6,.35];
 const mkLevel=(rgb,i,tag)=>chart.addLineSeries({color:`rgba(${rgb},${ALPHA[i]})`,lineWidth:i==0?2:1,lineStyle:i==0?0:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:tag+(i+1)});
 const resS=[0,1,2].map(i=>mkLevel('239,68,68',i,'R'));
@@ -90,19 +93,34 @@ function markerStyle(m){
     case 'BOS':case 'CHOCH':return{position:'belowBar',shape:'square',color:m.type=='BOS'?'#84cc16':'#f59e0b',text:m.text,size:0};
     case 'BREAKOUT':return{position:'aboveBar',shape:'circle',color:'#a3e635',text:m.text,size:0};
     case 'WEAK_BREAKOUT':return{position:'aboveBar',shape:'circle',color:'#64748b',text:m.text,size:0};
+    case 'INST_EARLY_BUY':return{position:'belowBar',shape:'arrowUp',color:'#84cc16',text:'EARLY BUY',size:2};
+    case 'INST_BUY':return{position:'belowBar',shape:'arrowUp',color:'#22c55e',text:'BUY',size:2};
+    case 'INST_BREAKOUT':return{position:'belowBar',shape:'arrowUp',color:'#06b6d4',text:'BREAKOUT',size:2};
+    case 'INST_TAKE_PROFIT':return{position:'aboveBar',shape:'arrowDown',color:'#f97316',text:'PARTIAL SELL',size:2};
+    case 'INST_EXIT':return{position:'aboveBar',shape:'arrowDown',color:'#ef4444',text:'EXIT',size:2};
   }
   return null;
 }
 
 function redraw(){
   if(!data)return;
-  const show=id=>$(id).checked;
+  const show=id=>$(id)?$(id).checked:false;
   for(const [k,s] of Object.entries(emaS))s.setData(show('ema')?pairs(data.candles,data[k]):[]);
   resS.forEach((s,i)=>s.setData(show('sr')&&data.resistanceLevels?pairs(data.candles,data.resistanceLevels[i]):[]));
   supS.forEach((s,i)=>s.setData(show('sr')&&data.supportLevels?pairs(data.candles,data.supportLevels[i]):[]));
-  const ms=data.markers.filter(m=>{
+  if(typeof instS!=='undefined'&&instS){
+    instS.ema20.setData(show('inst')&&data.institutional?pairs(data.candles,data.institutional.ema20):[]);
+    instS.trailStop.setData(show('inst')&&data.institutional?pairs(data.candles,data.institutional.trailStop):[]);
+  }
+
+  let allMarkers=[...(data.markers||[])];
+  if(show('inst')&&data.institutional&&data.institutional.markers){
+    allMarkers=allMarkers.concat(data.institutional.markers);
+  }
+  const ms=allMarkers.filter(m=>{
     if(m.type=='BOS'||m.type=='CHOCH')return show('st');
     if(m.type=='BREAKOUT'||m.type=='WEAK_BREAKOUT')return show('bo');
+    if(m.type.startsWith('INST_'))return show('inst');
     return markerStyle(m)!=null;
   }).map(m=>({time:T(m.time),...markerStyle(m)}));
   // lightweight-charts requires markers sorted by time
@@ -136,6 +154,12 @@ function dash(s){
     row('HTF trend',s.htfTrend,cls(s.htfTrend))+
     row('Bull score',s.bullScore.toFixed(0),s.bullScore>=70?'g':'n')+row('Bear score',s.bearScore.toFixed(0),s.bearScore>=70?'r':'n')+
     row('Signal',s.recommendation,cls(s.recommendation))+row('Trade',s.tradeStatus,s.tradeStatus=='LONG'?'g':s.tradeStatus=='SHORT'?'r':'n');
+  if(data&&data.institutional&&data.institutional.summary){
+    const is=data.institutional.summary;
+    h+=`<div style="border-top:1px solid #334155;margin-top:2px;padding-top:4px"><span>Inst Trend</span><b class="${is.bullTrend?'g':'n'}">${is.bullTrend?'BULL TREND':'NEUTRAL'}</b></div>`+
+       `<div><span>Inst Signal</span><b class="${cls(is.latestSignal)}">${is.latestSignal}</b></div>`+
+       `<div><span>ADX / Trail</span><b class="n">${is.adx.toFixed(1)}${is.trailStop>0?' | $'+is.trailStop.toFixed(2):''}</b></div>`;
+  }
   if(s.nextTrade&&s.nextTrade.action&&s.nextTrade.action!=='NO TRADE'){
     const nt=s.nextTrade;
     h+=`<div style="border-top:1px solid #334155;margin-top:2px;padding-top:4px"><span>Next Setup</span><b class="${cls(nt.action)}">${nt.action}</b></div>`+
@@ -162,7 +186,7 @@ async function load(){
 $('go').onclick=load;
 $('tf').onchange=()=>{fillRanges();load()};
 $('p').onchange=load;$('d').onchange=load;
-['ema','sr','st','bo','lv'].forEach(id=>$(id).onchange=redraw);
+['ema','sr','st','bo','lv','inst'].forEach(id=>{if($(id))$(id).onchange=redraw;});
 $('t').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 fillRanges();load();
 </script>

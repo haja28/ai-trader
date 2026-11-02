@@ -2,6 +2,7 @@ C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\AiHedge
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\analysis\LotteryAnalysis.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\cache\ApiCache.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\ChartResult.java
+C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\InstitutionalIndicator.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\SignalConfig.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\chart\SignalEngine.java
 C:\workspace\hedgefund\ai-hedge-fund-java\src\main\java\com\hedgefund\ai\config\AiConfig.java

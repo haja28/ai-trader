@@ -61,6 +61,7 @@ com\hedgefund\ai\service\LlmService.class
 com\hedgefund\ai\service\agents\ValuationAnalystAgent.class
 com\hedgefund\ai\model\agent\PortfolioDecision$Builder.class
 com\hedgefund\ai\repository\TickerAnalysisRepository.class
+com\hedgefund\ai\chart\ChartResult$InstitutionalData.class
 com\hedgefund\ai\service\agents\WarrenBuffettAgent$BuffettSignal.class
 com\hedgefund\ai\model\api\ApiResponses$CompanyFactsResponse.class
 com\hedgefund\ai\model\api\MarketAuxResponse$Entity.class
@@ -78,9 +79,11 @@ com\hedgefund\ai\config\FinancialDataProviderConfig.class
 com\hedgefund\ai\config\JacksonConfig.class
 com\hedgefund\ai\service\agents\FundamentalsAnalystAgent.class
 com\hedgefund\ai\service\api\FinancialDatasetsClient.class
+com\hedgefund\ai\chart\ChartResult$InstitutionalSummary.class
 com\hedgefund\ai\model\api\ApiResponses$CompanyNewsResponse.class
 com\hedgefund\ai\service\AnalysisPersistenceService.class
 com\hedgefund\ai\model\HedgeFundResponse.class
+com\hedgefund\ai\chart\InstitutionalIndicator.class
 com\hedgefund\ai\service\api\MarketAuxClient$ArticleSummary.class
 com\hedgefund\ai\model\api\LineItem.class
 com\hedgefund\ai\chart\ChartResult$Trade.class
